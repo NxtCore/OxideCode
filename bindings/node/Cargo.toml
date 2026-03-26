@@ -1,0 +1,22 @@
+[package]
+name = "oxidecode-node"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+oxidecode-core = { path = "../../core" }
+napi = { version = "2", features = ["async"] }
+napi-derive = "2"
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+napi-build = "2"

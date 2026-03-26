@@ -1,0 +1,47 @@
+<idea-plugin>
+    <id>com.oxidecode</id>
+    <name>OxideCode</name>
+    <vendor>OxideCode</vendor>
+    <description>AI autocomplete and Next Edit Suggestions powered by local and cloud models.</description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService
+            serviceInterface="com.oxidecode.CoreBridge"
+            serviceImplementation="com.oxidecode.CoreBridge"/>
+
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.oxidecode.settings.OxideCodeConfigurable"
+            id="com.oxidecode.settings"
+            displayName="OxideCode"/>
+
+        <editorFactoryListener
+            implementation="com.oxidecode.nes.NesEditorListener"/>
+
+        <completion.contributor
+            language="any"
+            implementationClass="com.oxidecode.autocomplete.OxideCompletionContributor"
+            order="first"/>
+
+        <codeInsight.inlayProvider
+            language=""
+            implementationClass="com.oxidecode.nes.NesInlayProvider"/>
+    </extensions>
+
+    <actions>
+        <action id="oxidecode.acceptNes"
+                class="com.oxidecode.nes.AcceptNesAction"
+                text="Accept Next Edit Suggestion"
+                description="Apply the OxideCode NES prediction">
+            <keyboard-shortcut keymap="$default" first-keystroke="TAB"/>
+        </action>
+        <action id="oxidecode.dismissNes"
+                class="com.oxidecode.nes.DismissNesAction"
+                text="Dismiss Next Edit Suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="ESCAPE"/>
+        </action>
+    </actions>
+</idea-plugin>
