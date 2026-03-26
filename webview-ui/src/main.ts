@@ -1,4 +1,1 @@
-import App from "./App.svelte";
-
-const app = new App({ target: document.body });
-export default app;
+// Entry point moved to main.tsx (React). This file is no longer used.

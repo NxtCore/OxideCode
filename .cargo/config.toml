@@ -3,3 +3,9 @@ git-fetch-with-cli = true
 
 [build]
 jobs = 4
+
+# Local path override for omniference
+# The canonical patch declaration lives in the workspace Cargo.toml [patch.crates-io].
+# This entry documents the intent: during development the local checkout at
+# ../omniference is always used instead of the published crates.io version.
+# Path: E:\Coding\omniference  (sibling of this workspace)

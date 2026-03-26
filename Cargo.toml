@@ -13,12 +13,13 @@ authors = ["OxideCode Contributors"]
 license = "MIT"
 
 [workspace.dependencies]
+omniference = { path = "../omniference", version = "0.1.5" }
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures-util = "0.3"
-
-# HTTP + SSE streaming
+async-stream = "0.3"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 eventsource-stream = "0.2"
 
@@ -29,7 +30,6 @@ serde_json = "1"
 # Caching + data structures
 lru = "0.12"
 dashmap = "6"
-async-stream = "0.3"
 
 # Error handling
 thiserror = "2"
@@ -38,6 +38,9 @@ anyhow = "1"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[patch.crates-io]
+omniference = { path = "../omniference" }
 
 [profile.release]
 opt-level = 3

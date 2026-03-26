@@ -10,16 +10,21 @@ name = "oxidecode_core"
 crate-type = ["rlib"]
 
 [dependencies]
+omniference = { workspace = true }
+
+# Async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 futures-util = { workspace = true }
-reqwest = { workspace = true }
-eventsource-stream = { workspace = true }
+async-stream = { workspace = true }
+
 serde = { workspace = true }
 serde_json = { workspace = true }
+
 lru = { workspace = true }
 dashmap = { workspace = true }
-async-stream = { workspace = true }
+
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+
 tracing = { workspace = true }

@@ -5,9 +5,9 @@ use tokio_util::sync::CancellationToken;
 
 use oxidecode_core::{
     autocomplete::{CompletionContext, CompletionEngine},
-    nes::{EditDelta, NesEngine},
-    providers::openai_compat::OpenAiCompatProvider,
     config::{AutocompleteConfig, NesConfig},
+    nes::{EditDelta, NesEngine},
+    providers::OmniProvider,
 };
 
 /// Initialise the tracing subscriber once.
@@ -44,7 +44,7 @@ pub async fn get_completion(
     provider_config: JsProviderConfig,
     ctx: JsCompletionContext,
 ) -> Result<Option<String>> {
-    let provider = Arc::new(OpenAiCompatProvider::new(
+    let provider = Arc::new(OmniProvider::new_openai_compat(
         &provider_config.base_url,
         provider_config.api_key,
         &provider_config.model,
@@ -100,7 +100,7 @@ pub async fn predict_next_edit(
     file_content: String,
     language: String,
 ) -> Result<Option<JsNesHint>> {
-    let provider = Arc::new(OpenAiCompatProvider::new(
+    let provider = Arc::new(OmniProvider::new_openai_compat(
         &provider_config.base_url,
         provider_config.api_key,
         &provider_config.model,

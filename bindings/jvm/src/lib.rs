@@ -9,7 +9,7 @@ use oxidecode_core::{
     autocomplete::{CompletionContext, CompletionEngine},
     config::{AutocompleteConfig, NesConfig},
     nes::{EditDelta, NesEngine},
-    providers::openai_compat::OpenAiCompatProvider,
+    providers::OmniProvider,
 };
 
 /// Lazily-initialised single-threaded Tokio runtime for JNI calls.
@@ -48,13 +48,13 @@ pub extern "system" fn Java_com_oxidecode_Core_getCompletion(
     } else {
         Some(api_key)
     };
-    let completion_model_opt = if completion_model.is_empty() {
+    let completion_model_opt: Option<&str> = if completion_model.is_empty() {
         None
     } else {
         Some(completion_model.as_str())
     };
 
-    let provider = Arc::new(OpenAiCompatProvider::new(
+    let provider = Arc::new(OmniProvider::new_openai_compat(
         &base_url,
         api_key_opt,
         &model,
@@ -107,7 +107,7 @@ pub extern "system" fn Java_com_oxidecode_Core_predictNextEdit(
 
     let deltas: Vec<EditDelta> = serde_json::from_str(&deltas_json).unwrap_or_default();
 
-    let provider = Arc::new(OpenAiCompatProvider::new(
+    let provider = Arc::new(OmniProvider::new_openai_compat(
         &base_url,
         api_key_opt,
         &model,
