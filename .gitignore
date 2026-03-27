@@ -17,9 +17,14 @@ build/
 .idea/
 *.iml
 out/
+.intellijPlatform
+.kotlin/
 
 # VSCode
 .vscode/
+
+# Zed
+.zed/
 
 # Webview built output
 webview-ui/dist/

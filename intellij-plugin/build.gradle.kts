@@ -1,7 +1,7 @@
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "1.9.22"
-    id("org.jetbrains.intellij") version "1.17.2"
+    id("org.jetbrains.kotlin.jvm") version "2.3.20"
+    id("org.jetbrains.intellij.platform") version "2.13.1"
 }
 
 group = "com.oxidecode"
@@ -9,26 +9,31 @@ version = "0.1.0"
 
 repositories {
     mavenCentral()
+    intellijPlatform {
+        defaultRepositories()
+    }
 }
 
-intellij {
-    version.set("2023.3")
-    type.set("IC")
-    plugins.set(listOf())
+dependencies {
+    intellijPlatform {
+        intellijIdea("2025.3")
+    }
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
+}
+
+intellijPlatform {
+    pluginConfiguration {
+        ideaVersion {
+            sinceBuild = "253"
+            untilBuild = "261.*"
+        }
+    }
 }
 
 tasks {
-    buildSearchableOptions { enabled = false }
-
-    patchPluginXml {
-        sinceBuild.set("233")
-        untilBuild.set("243.*")
-    }
-
     // Copy the compiled JVM native library into resources before building the jar.
     val copyNativeLib by registering(Copy::class) {
         val os = System.getProperty("os.name").lowercase()

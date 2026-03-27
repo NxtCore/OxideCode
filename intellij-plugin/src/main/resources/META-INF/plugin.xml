@@ -26,9 +26,7 @@
             implementationClass="com.oxidecode.autocomplete.OxideCompletionContributor"
             order="first"/>
 
-        <codeInsight.inlayProvider
-            language=""
-            implementationClass="com.oxidecode.nes.NesInlayProvider"/>
+
     </extensions>
 
     <actions>

@@ -22,9 +22,20 @@ import kotlinx.serialization.json.Json
  */
 class NesEditorListener : EditorFactoryListener {
 
+    private val listeners = java.util.WeakHashMap<Editor, DocumentListener>()
+
     override fun editorCreated(event: EditorFactoryEvent) {
         val editor = event.editor
-        editor.document.addDocumentListener(NesDocumentListener(editor), editor.disposable)
+        val listener = NesDocumentListener(editor)
+        editor.document.addDocumentListener(listener)
+        listeners[editor] = listener
+    }
+
+    override fun editorReleased(event: EditorFactoryEvent) {
+        val editor = event.editor
+        listeners.remove(editor)?.let { listener ->
+            editor.document.removeDocumentListener(listener)
+        }
     }
 }
 
