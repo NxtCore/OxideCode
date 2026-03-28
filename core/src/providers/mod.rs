@@ -25,6 +25,8 @@ use omniference::{
     OmniferenceService,
 };
 
+use tracing::{debug, info, trace, warn};
+
 use crate::agent::Message;
 use crate::autocomplete::CompletionContext;
 
@@ -162,6 +164,18 @@ impl Provider for OmniProvider {
         let model_ref = self.completion_model_ref.clone();
 
         stream! {
+            let model_id = model_ref.model_id.clone();
+            let base_url = model_ref.provider.endpoint.base_url.clone();
+            info!(
+                model = %model_id,
+                base_url = %base_url,
+                filepath = %ctx.filepath,
+                language = %ctx.language,
+                prefix_len = ctx.prefix.len(),
+                suffix_len = ctx.suffix.len(),
+                "completion request starting"
+            );
+
             let messages = vec![
                 OmniMessage {
                     role: Role::System,
@@ -184,31 +198,51 @@ impl Provider for OmniProvider {
             let result = tokio::select! {
                 r = service.chat(request) => r,
                 _ = cancel.cancelled() => {
+                    debug!(model = %model_id, "completion cancelled before request sent");
                     yield Err(ProviderError::Cancelled);
                     return;
                 }
             };
 
             match result {
-                Err(e) => yield Err(ProviderError::Api { status: 0, message: e }),
+                Err(e) => {
+                    warn!(model = %model_id, error = %e, "completion request failed");
+                    yield Err(ProviderError::Api { status: 0, message: e });
+                }
                 Ok(mut s) => {
+                    debug!(model = %model_id, "completion stream opened, receiving tokens");
+                    let mut token_count = 0usize;
+                    let mut total_chars = 0usize;
                     loop {
                         tokio::select! {
                             event = s.next() => match event {
                                 Some(StreamEvent::TextDelta { content }) if !content.is_empty() => {
+                                    token_count += 1;
+                                    total_chars += content.len();
+                                    trace!(model = %model_id, token = %content, "completion token received");
                                     yield Ok(content);
                                 }
                                 Some(StreamEvent::Error { code, message }) => {
+                                    warn!(model = %model_id, code = %code, message = %message, "completion stream error");
                                     yield Err(ProviderError::Api {
                                         status: 0,
                                         message: format!("{code}: {message}"),
                                     });
                                     return;
                                 }
-                                Some(StreamEvent::Done) | None => return,
+                                Some(StreamEvent::Done) | None => {
+                                    info!(
+                                        model = %model_id,
+                                        tokens = token_count,
+                                        total_chars = total_chars,
+                                        "completion stream finished"
+                                    );
+                                    return;
+                                }
                                 Some(_) => {} // token counts, metadata, etc.
                             },
                             _ = cancel.cancelled() => {
+                                debug!(model = %model_id, tokens_so_far = token_count, "completion stream cancelled");
                                 yield Err(ProviderError::Cancelled);
                                 return;
                             }
@@ -228,37 +262,66 @@ impl Provider for OmniProvider {
         let model_ref = self.model_ref.clone();
 
         stream! {
+            let model_id = model_ref.model_id.clone();
+            let base_url = model_ref.provider.endpoint.base_url.clone();
+            info!(
+                model = %model_id,
+                base_url = %base_url,
+                message_count = messages.len(),
+                "chat request starting"
+            );
+
             let omni_msgs: Vec<OmniMessage> = messages.iter().map(to_omni_message).collect();
             let request = build_request(model_ref, omni_msgs);
 
             let result = tokio::select! {
                 r = service.chat(request) => r,
                 _ = cancel.cancelled() => {
+                    debug!(model = %model_id, "chat cancelled before request sent");
                     yield Err(ProviderError::Cancelled);
                     return;
                 }
             };
 
             match result {
-                Err(e) => yield Err(ProviderError::Api { status: 0, message: e }),
+                Err(e) => {
+                    warn!(model = %model_id, error = %e, "chat request failed");
+                    yield Err(ProviderError::Api { status: 0, message: e });
+                }
                 Ok(mut s) => {
+                    debug!(model = %model_id, "chat stream opened, receiving tokens");
+                    let mut token_count = 0usize;
+                    let mut total_chars = 0usize;
                     loop {
                         tokio::select! {
                             event = s.next() => match event {
                                 Some(StreamEvent::TextDelta { content }) if !content.is_empty() => {
+                                    token_count += 1;
+                                    total_chars += content.len();
+                                    trace!(model = %model_id, token = %content, "chat token received");
                                     yield Ok(content);
                                 }
                                 Some(StreamEvent::Error { code, message }) => {
+                                    warn!(model = %model_id, code = %code, message = %message, "chat stream error");
                                     yield Err(ProviderError::Api {
                                         status: 0,
                                         message: format!("{code}: {message}"),
                                     });
                                     return;
                                 }
-                                Some(StreamEvent::Done) | None => return,
+                                Some(StreamEvent::Done) | None => {
+                                    info!(
+                                        model = %model_id,
+                                        tokens = token_count,
+                                        total_chars = total_chars,
+                                        "chat stream finished"
+                                    );
+                                    return;
+                                }
                                 Some(_) => {}
                             },
                             _ = cancel.cancelled() => {
+                                debug!(model = %model_id, tokens_so_far = token_count, "chat stream cancelled");
                                 yield Err(ProviderError::Cancelled);
                                 return;
                             }

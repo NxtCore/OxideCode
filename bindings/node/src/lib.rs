@@ -2,6 +2,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 use oxidecode_core::{
     autocomplete::{CompletionContext, CompletionEngine},
@@ -16,6 +17,7 @@ pub fn init_logging() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("oxidecode=debug")
         .try_init();
+    debug!("OxideCode tracing initialised");
 }
 
 // ─── Completion ──────────────────────────────────────────────────────────────
@@ -44,6 +46,15 @@ pub async fn get_completion(
     provider_config: JsProviderConfig,
     ctx: JsCompletionContext,
 ) -> Result<Option<String>> {
+    info!(
+        base_url = %provider_config.base_url,
+        model = %provider_config.model,
+        completion_model = ?provider_config.completion_model,
+        filepath = %ctx.filepath,
+        language = %ctx.language,
+        "get_completion called"
+    );
+
     let provider = Arc::new(OmniProvider::new_openai_compat(
         &provider_config.base_url,
         provider_config.api_key,
@@ -61,6 +72,12 @@ pub async fn get_completion(
 
     let cancel = CancellationToken::new();
     let result = engine.complete(context, cancel, |_token| {}).await;
+
+    match &result {
+        Some(text) => info!(len = text.len(), "get_completion returned result"),
+        None => warn!("get_completion returned None (empty or cancelled)"),
+    }
+
     Ok(result)
 }
 
@@ -100,6 +117,17 @@ pub async fn predict_next_edit(
     file_content: String,
     language: String,
 ) -> Result<Option<JsNesHint>> {
+    info!(
+        base_url = %provider_config.base_url,
+        model = %provider_config.model,
+        delta_count = deltas.len(),
+        filepath = %cursor_filepath,
+        line = cursor_line,
+        col = cursor_col,
+        language = %language,
+        "predict_next_edit called"
+    );
+
     let provider = Arc::new(OmniProvider::new_openai_compat(
         &provider_config.base_url,
         provider_config.api_key,
@@ -132,6 +160,16 @@ pub async fn predict_next_edit(
             cancel,
         )
         .await;
+
+    match &hint {
+        Some(h) => info!(
+            hint_filepath = %h.position.filepath,
+            hint_line = h.position.line,
+            hint_col = h.position.col,
+            "predict_next_edit returned hint"
+        ),
+        None => debug!("predict_next_edit returned None"),
+    }
 
     Ok(hint.map(|h| JsNesHint {
         filepath: h.position.filepath,

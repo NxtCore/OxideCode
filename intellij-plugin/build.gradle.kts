@@ -1,6 +1,7 @@
 plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.3.20"
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.20"
     id("org.jetbrains.intellij.platform") version "2.13.1"
 }
 
@@ -18,6 +19,8 @@ dependencies {
     intellijPlatform {
         intellijIdea("2025.3")
     }
+
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
 }
 
 kotlin {
@@ -43,7 +46,7 @@ tasks {
             else -> "so"
         }
         val prefix = if (os.contains("win")) "" else "lib"
-        from("${rootProject.projectDir}/../../target/release/${prefix}oxidecode_jvm.$ext")
+        from("${project.projectDir}/../target/release/${prefix}oxidecode_jvm.$ext")
         into("src/main/resources/native")
         rename { "oxidecode_jvm.$ext" }
     }

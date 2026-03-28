@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::agent::Message;
 use crate::config::NesConfig;
@@ -41,6 +41,15 @@ impl NesEngine {
         if history.len() >= self.config.edit_history_len {
             history.pop_front();
         }
+        debug!(
+            filepath = %delta.filepath,
+            line = delta.start_line,
+            col = delta.start_col,
+            removed_len = delta.removed.len(),
+            inserted_len = delta.inserted.len(),
+            history_size = history.len() + 1,
+            "NES edit pushed"
+        );
         history.push_back(delta);
     }
 
@@ -68,6 +77,15 @@ impl NesEngine {
             let history = self.history.lock().unwrap();
             history.iter().cloned().collect()
         };
+
+        info!(
+            filepath = %cursor_filepath,
+            line = cursor_line,
+            col = cursor_col,
+            language = %language,
+            history_size = recent_edits.len(),
+            "NES predict called"
+        );
 
         if recent_edits.is_empty() {
             debug!("NES skipped: no edit history");
@@ -106,6 +124,7 @@ impl NesEngine {
             }
         }
 
+        debug!(raw_len = raw_response.len(), raw = %raw_response, "NES raw response received");
         self.parse_response(&raw_response)
     }
 
@@ -130,7 +149,7 @@ impl NesEngine {
             })
         };
 
-        Some(NesHint {
+        let hint = NesHint {
             position: HintPosition {
                 filepath: resp.filepath,
                 line: resp.line,
@@ -139,7 +158,18 @@ impl NesEngine {
             replacement: resp.replacement,
             selection_to_remove,
             confidence: resp.confidence,
-        })
+        };
+
+        info!(
+            filepath = %hint.position.filepath,
+            line = hint.position.line,
+            col = hint.position.col,
+            replacement_len = hint.replacement.len(),
+            confidence = ?hint.confidence,
+            "NES hint parsed successfully"
+        );
+
+        Some(hint)
     }
 
     pub fn debounce_ms(&self) -> u64 {

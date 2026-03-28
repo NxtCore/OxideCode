@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::config::AutocompleteConfig;
 use crate::providers::ProviderDyn;
@@ -49,12 +49,22 @@ impl CompletionEngine {
     ) -> Option<String> {
         let key = ctx.cache_key();
 
+        info!(
+            filepath = %ctx.filepath,
+            language = %ctx.language,
+            prefix_len = ctx.prefix.len(),
+            suffix_len = ctx.suffix.len(),
+            cache_key = key,
+            "completion requested"
+        );
+
         if let Some(cached) = self.cache.get(key) {
             debug!("completion cache hit");
             on_token(cached.clone());
             return Some(cached);
         }
 
+        debug!("completion cache miss, querying provider");
         let mut stream = self.provider.complete_dyn(ctx, cancel.clone());
         let mut full = String::new();
 
@@ -82,9 +92,11 @@ impl CompletionEngine {
         }
 
         if !full.is_empty() {
+            info!(len = full.len(), "completion finished, caching result");
             self.cache.insert(key, full.clone());
             Some(full)
         } else {
+            info!("completion produced empty result");
             None
         }
     }

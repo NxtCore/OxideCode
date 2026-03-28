@@ -1,6 +1,7 @@
 package com.oxidecode
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 import java.nio.file.Files
 
@@ -16,6 +17,14 @@ class CoreBridge {
 
     init {
         loadNativeLibrary()
+        // Attempt to initialise native tracing/logging after the library is loaded.
+        // This is best-effort: if the native function is missing or fails we log and continue.
+        try {
+            initLogging()
+            LOG.info("OxideCode native logging initialised")
+        } catch (e: Throwable) {
+            LOG.warn("Failed to initialise native logging: ${e.message}", e)
+        }
     }
 
     // ── Autocomplete ──────────────────────────────────────────────────────
@@ -30,6 +39,9 @@ class CoreBridge {
         language: String,
         filepath: String,
     ): String
+
+    // Expose a native init hook to configure tracing from the JVM side.
+    external fun initLogging()
 
     // ── NES ───────────────────────────────────────────────────────────────
 
@@ -50,10 +62,16 @@ class CoreBridge {
     ): String
 
     companion object {
+        private val LOG: Logger = Logger.getInstance(CoreBridge::class.java)
         private var loaded = false
 
         private fun loadNativeLibrary() {
-            if (loaded) return
+            if (loaded) {
+                LOG.debug("Native library already loaded, skipping")
+                return
+            }
+
+            LOG.info("Loading OxideCode native library")
             val os = System.getProperty("os.name").lowercase()
             val ext = when {
                 os.contains("win") -> "dll"
@@ -67,10 +85,16 @@ class CoreBridge {
             val tempDir = Files.createTempDirectory("oxidecode").toFile()
             val tempLib = File(tempDir, "oxidecode_jvm.$ext")
             tempLib.deleteOnExit()
-            stream.use { input -> tempLib.outputStream().use { output -> input.copyTo(output) } }
+            stream.use { input ->
+                tempLib.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
 
+            LOG.info("Loading native library from ${tempLib.absolutePath}")
             System.load(tempLib.absolutePath)
             loaded = true
+            LOG.info("OxideCode native library loaded successfully")
         }
     }
 }
