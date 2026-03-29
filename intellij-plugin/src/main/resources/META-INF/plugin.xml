@@ -19,6 +19,9 @@
             displayName="OxideCode"/>
 
         <editorFactoryListener
+            implementation="com.oxidecode.autocomplete.InlineCompletionEditorListener"/>
+
+        <editorFactoryListener
             implementation="com.oxidecode.nes.NesEditorListener"/>
 
         <completion.contributor

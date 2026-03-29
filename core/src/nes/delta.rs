@@ -5,7 +5,12 @@ use serde::{Deserialize, Serialize};
 /// IDE plugins emit one `EditDelta` per document change event.
 /// The NES engine accumulates a rolling window of these to build
 /// edit-pattern context for the model.
+///
+/// Field names are serialized in camelCase to match the Kotlin
+/// `@Serializable` convention used by the IntelliJ plugin (which emits
+/// `startLine`, `startCol`, `fileContent`, `timestampMs`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EditDelta {
     /// Relative path of the file that changed.
     pub filepath: String,

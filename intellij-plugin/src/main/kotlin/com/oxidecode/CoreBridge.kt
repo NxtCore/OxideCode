@@ -29,6 +29,12 @@ class CoreBridge {
 
     // ── Autocomplete ──────────────────────────────────────────────────────
 
+    /**
+     * @param completionEndpoint  Which HTTP endpoint to use: "completions" (default,
+     *   `/v1/completions`) or "chat_completions" (`/v1/chat/completions`).
+     * @param promptStyle         Autocomplete prompt format: kept in sync with NES
+     *   (`"generic" | "zeta1" | "zeta2"`).
+     */
     external fun getCompletion(
         baseUrl: String,
         apiKey: String,
@@ -38,6 +44,8 @@ class CoreBridge {
         suffix: String,
         language: String,
         filepath: String,
+        completionEndpoint: String,
+        promptStyle: String,
     ): String
 
     // Expose a native init hook to configure tracing from the JVM side.
@@ -46,19 +54,24 @@ class CoreBridge {
     // ── NES ───────────────────────────────────────────────────────────────
 
     /**
-     * @param deltasJson  JSON array of EditDelta objects.
-     * @return            JSON-encoded NesHint, or empty string if no prediction.
+     * @param nesPromptStyle      NES prompt format: "generic" | "zeta1" | "zeta2".
+     * @param deltasJson          JSON array of EditDelta objects.
+     * @param completionEndpoint  Which HTTP endpoint to use for Generic NES style:
+     *   "completions" (default) or "chat_completions".
+     * @return                    JSON-encoded NesHint, or empty string if no prediction.
      */
     external fun predictNextEdit(
         baseUrl: String,
         apiKey: String,
         model: String,
+        nesPromptStyle: String,
         deltasJson: String,
         cursorFilepath: String,
         cursorLine: Int,
         cursorCol: Int,
         fileContent: String,
         language: String,
+        completionEndpoint: String,
     ): String
 
     companion object {

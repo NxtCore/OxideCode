@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { predictNextEdit, getProviderConfig, EditDelta, NesHint } from "./bridge";
+import { predictNextEdit, getProviderConfig, getNesConfig, EditDelta, NesHint } from "./bridge";
 
 /**
  * NES (Next Edit Suggestion) provider.
@@ -103,10 +103,12 @@ export class NesProvider {
     const document = editor.document;
     const cursor = editor.selection.active;
     const providerConfig = getProviderConfig();
+    const nesConfig = getNesConfig();
 
     try {
       const hint = await predictNextEdit(
         providerConfig,
+        nesConfig,
         [...this.editHistory],
         vscode.workspace.asRelativePath(document.uri),
         cursor.line,

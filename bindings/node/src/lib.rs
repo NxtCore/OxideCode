@@ -6,7 +6,7 @@ use tracing::{debug, info, warn};
 
 use oxidecode_core::{
     autocomplete::{CompletionContext, CompletionEngine},
-    config::{AutocompleteConfig, NesConfig},
+    config::{AutocompleteConfig, CompletionEndpoint, NesConfig, NesPromptStyle},
     nes::{EditDelta, NesEngine},
     providers::OmniProvider,
 };
@@ -20,6 +20,35 @@ pub fn init_logging() {
     debug!("OxideCode tracing initialised");
 }
 
+// ─── Shared config ───────────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct JsProviderConfig {
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub model: String,
+    pub completion_model: Option<String>,
+    /// Which HTTP endpoint to use for inference requests.
+    /// `"completions"` (default) → `/v1/completions` (raw, no chat-template framing).
+    /// `"chat_completions"` → `/v1/chat/completions`.
+    pub completion_endpoint: Option<String>,
+}
+
+fn parse_completion_endpoint(s: Option<&str>) -> CompletionEndpoint {
+    match s {
+        Some("chat_completions") => CompletionEndpoint::ChatCompletions,
+        _ => CompletionEndpoint::Completions,
+    }
+}
+
+fn parse_prompt_style(s: Option<&str>) -> NesPromptStyle {
+    match s {
+        Some("zeta1") => NesPromptStyle::Zeta1,
+        Some("zeta2") => NesPromptStyle::Zeta2,
+        _ => NesPromptStyle::Generic,
+    }
+}
+
 // ─── Completion ──────────────────────────────────────────────────────────────
 
 #[napi(object)]
@@ -28,14 +57,7 @@ pub struct JsCompletionContext {
     pub suffix: String,
     pub language: String,
     pub filepath: String,
-}
-
-#[napi(object)]
-pub struct JsProviderConfig {
-    pub base_url: String,
-    pub api_key: Option<String>,
-    pub model: String,
-    pub completion_model: Option<String>,
+    pub prompt_style: Option<String>,
 }
 
 /// Returns the full completion text. Fires once the stream is complete.
@@ -46,12 +68,17 @@ pub async fn get_completion(
     provider_config: JsProviderConfig,
     ctx: JsCompletionContext,
 ) -> Result<Option<String>> {
+    let endpoint = parse_completion_endpoint(provider_config.completion_endpoint.as_deref());
+    let prompt_style = parse_prompt_style(ctx.prompt_style.as_deref());
+
     info!(
         base_url = %provider_config.base_url,
         model = %provider_config.model,
         completion_model = ?provider_config.completion_model,
         filepath = %ctx.filepath,
         language = %ctx.language,
+        endpoint = ?endpoint,
+        prompt_style = ?prompt_style,
         "get_completion called"
     );
 
@@ -62,7 +89,13 @@ pub async fn get_completion(
         provider_config.completion_model.as_deref(),
     ));
 
-    let engine = CompletionEngine::new(provider, AutocompleteConfig::default());
+    let autocomplete_cfg = AutocompleteConfig {
+        completion_endpoint: endpoint,
+        prompt_style,
+        ..AutocompleteConfig::default()
+    };
+
+    let engine = CompletionEngine::new(provider, autocomplete_cfg);
     let context = CompletionContext {
         prefix: ctx.prefix,
         suffix: ctx.suffix,
@@ -82,6 +115,13 @@ pub async fn get_completion(
 }
 
 // ─── NES ─────────────────────────────────────────────────────────────────────
+
+#[napi(object)]
+pub struct JsNesConfig {
+    /// Which NES prompt style to use: "generic" | "zeta1" | "zeta2".
+    /// Defaults to "generic" when absent or unrecognised.
+    pub prompt_style: Option<String>,
+}
 
 #[napi(object)]
 pub struct JsEditDelta {
@@ -110,6 +150,7 @@ pub struct JsNesHint {
 #[napi]
 pub async fn predict_next_edit(
     provider_config: JsProviderConfig,
+    nes_config: JsNesConfig,
     deltas: Vec<JsEditDelta>,
     cursor_filepath: String,
     cursor_line: u32,
@@ -117,6 +158,10 @@ pub async fn predict_next_edit(
     file_content: String,
     language: String,
 ) -> Result<Option<JsNesHint>> {
+    let prompt_style = parse_prompt_style(nes_config.prompt_style.as_deref());
+
+    let endpoint = parse_completion_endpoint(provider_config.completion_endpoint.as_deref());
+
     info!(
         base_url = %provider_config.base_url,
         model = %provider_config.model,
@@ -125,6 +170,8 @@ pub async fn predict_next_edit(
         line = cursor_line,
         col = cursor_col,
         language = %language,
+        prompt_style = ?prompt_style,
+        endpoint = ?endpoint,
         "predict_next_edit called"
     );
 
@@ -135,7 +182,12 @@ pub async fn predict_next_edit(
         provider_config.completion_model.as_deref(),
     ));
 
-    let engine = NesEngine::new(provider, NesConfig::default());
+    let nes_cfg = NesConfig {
+        prompt_style,
+        completion_endpoint: endpoint,
+        ..NesConfig::default()
+    };
+    let engine = NesEngine::new(provider, nes_cfg);
 
     for d in deltas {
         engine.push_edit(EditDelta {

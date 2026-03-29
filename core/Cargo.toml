@@ -12,6 +12,11 @@ crate-type = ["rlib"]
 [dependencies]
 omniference = { workspace = true }
 
+# HTTP client for raw /v1/completions (base-model FIM — bypasses omniference
+# which only supports /v1/chat/completions)
+reqwest = { workspace = true }
+eventsource-stream = { workspace = true }
+
 # Async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }

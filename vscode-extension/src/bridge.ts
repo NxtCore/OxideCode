@@ -14,6 +14,8 @@ export interface ProviderConfig {
   apiKey: string | null;
   model: string;
   completionModel: string | null;
+  /** "completions" (default) or "chat_completions" */
+  completionEndpoint: string;
 }
 
 export interface CompletionContext {
@@ -45,6 +47,11 @@ export interface NesHint {
   confidence?: number;
 }
 
+export interface NesConfig {
+  /** "generic" | "zeta1" | "zeta2" */
+  promptStyle: string;
+}
+
 let native: typeof import("../oxidecode.node") | null = null;
 
 function getNative(): typeof import("../oxidecode.node") {
@@ -65,6 +72,7 @@ export async function getCompletion(
 
 export async function predictNextEdit(
   providerConfig: ProviderConfig,
+  nesConfig: NesConfig,
   deltas: EditDelta[],
   cursorFilepath: string,
   cursorLine: number,
@@ -74,6 +82,7 @@ export async function predictNextEdit(
 ): Promise<NesHint | null> {
   return getNative().predictNextEdit(
     providerConfig,
+    nesConfig,
     deltas,
     cursorFilepath,
     cursorLine,
@@ -98,5 +107,13 @@ export function getProviderConfig(): ProviderConfig {
     apiKey: cfg.get<string>("apiKey", "") || null,
     model: cfg.get<string>("model", "qwen2.5-coder:7b"),
     completionModel: cfg.get<string>("completionModel", "") || null,
+    completionEndpoint: cfg.get<string>("completionEndpoint", "completions"),
+  };
+}
+
+export function getNesConfig(): NesConfig {
+  const cfg = vscode.workspace.getConfiguration("oxidecode.nes");
+  return {
+    promptStyle: cfg.get<string>("promptStyle", "generic"),
   };
 }

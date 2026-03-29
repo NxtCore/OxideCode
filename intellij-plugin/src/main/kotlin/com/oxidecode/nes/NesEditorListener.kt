@@ -100,12 +100,14 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     baseUrl = settings.baseUrl,
                     apiKey = settings.apiKey,
                     model = settings.model,
+                    nesPromptStyle = settings.nesPromptStyle,
                     deltasJson = deltasJson,
                     cursorFilepath = filepath,
                     cursorLine = cursor.line,
                     cursorCol = cursor.column,
                     fileContent = content,
                     language = guessLanguage(filepath),
+                    completionEndpoint = settings.completionEndpoint,
                 )
             }.getOrNull()
 

@@ -1,16 +1,19 @@
-//! Provider abstraction backed by the `omniference` inference engine.
+//! Provider abstraction for sending inference requests.
 //!
-//! Public API surface is unchanged so that `autocomplete`, `nes`, and all IDE
-//! bindings continue to compile without modification.
+//! Two endpoints are supported:
+//!   - `/v1/completions`     — raw text completion (default, avoids chat-template framing)
+//!   - `/v1/chat/completions` — chat format (optional, for chat-tuned models)
 //!
-//! The previous hand-rolled `openai_compat` and `anthropic` modules have been
-//! removed; `omniference` handles all HTTP, SSE parsing, and provider-specific
-//! protocol details.
+//! The active endpoint is controlled by `CompletionEndpoint` in each engine's
+//! config.  Zeta1 and Zeta2 NES prompt styles always use `/v1/completions`
+//! regardless of this setting because their FIM tokens cannot survive
+//! chat-template wrapping.
 
 use std::collections::BTreeMap;
 use std::pin::Pin;
 
 use async_stream::stream;
+use eventsource_stream::Eventsource;
 use futures_util::{Stream, StreamExt};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -28,9 +31,8 @@ use omniference::{
 use tracing::{debug, info, trace, warn};
 
 use crate::agent::Message;
-use crate::autocomplete::CompletionContext;
 
-// ─── Public types (unchanged API) ────────────────────────────────────────────
+// ─── Public types ─────────────────────────────────────────────────────────────
 
 pub type TokenStream = Pin<Box<dyn Stream<Item = Result<String, ProviderError>> + Send + 'static>>;
 pub type ProviderBox = Box<dyn ProviderDyn>;
@@ -51,50 +53,73 @@ pub enum ProviderError {
 
 /// Core trait every provider must implement.
 ///
-/// `complete` and `chat` take owned inputs so the returned `Stream` can be
-/// `'static` — required for `Box<dyn ProviderDyn>` and cross-task sharing.
+/// - `chat`     — routes to `/v1/chat/completions` via `omniference`.
+/// - `complete` — routes to `/v1/completions` with a raw prompt string.
+///
+/// Both return a streaming sequence of text tokens.  The returned `Stream`
+/// must be `'static` so it can cross task boundaries and be stored in
+/// `Box<dyn ProviderDyn>`.
 pub trait Provider: Send + Sync + 'static {
-    fn complete(
-        &self,
-        ctx: CompletionContext,
-        cancel: CancellationToken,
-    ) -> impl Stream<Item = Result<String, ProviderError>> + Send + 'static;
-
+    /// Send a chat request to `/v1/chat/completions`.
+    ///
+    /// Use this when the model is chat/instruction-tuned and the caller has
+    /// already built a properly structured `Vec<Message>`.
     fn chat(
         &self,
         messages: Vec<Message>,
+        cancel: CancellationToken,
+    ) -> impl Stream<Item = Result<String, ProviderError>> + Send + 'static;
+
+    /// Send a raw text-completion request to `/v1/completions`.
+    ///
+    /// This is the correct call path for base models and FIM prompts.
+    /// Unlike `chat`, no chat-template framing (BOS token, role markers,
+    /// etc.) is injected — which would otherwise corrupt FIM special tokens.
+    fn complete(
+        &self,
+        prompt: String,
+        max_tokens: u32,
+        stop_tokens: Vec<String>,
         cancel: CancellationToken,
     ) -> impl Stream<Item = Result<String, ProviderError>> + Send + 'static;
 }
 
 /// Object-safe wrapper so providers can be stored as `Box<dyn ProviderDyn>`.
 pub trait ProviderDyn: Send + Sync {
-    fn complete_dyn(&self, ctx: CompletionContext, cancel: CancellationToken) -> TokenStream;
     fn chat_dyn(&self, messages: Vec<Message>, cancel: CancellationToken) -> TokenStream;
+    fn complete_dyn(
+        &self,
+        prompt: String,
+        max_tokens: u32,
+        stop_tokens: Vec<String>,
+        cancel: CancellationToken,
+    ) -> TokenStream;
 }
 
 /// Blanket impl: any concrete `Provider` automatically becomes `ProviderDyn`.
 impl<P: Provider> ProviderDyn for P {
-    fn complete_dyn(&self, ctx: CompletionContext, cancel: CancellationToken) -> TokenStream {
-        Box::pin(self.complete(ctx, cancel))
-    }
-
     fn chat_dyn(&self, messages: Vec<Message>, cancel: CancellationToken) -> TokenStream {
         Box::pin(self.chat(messages, cancel))
+    }
+
+    fn complete_dyn(
+        &self,
+        prompt: String,
+        max_tokens: u32,
+        stop_tokens: Vec<String>,
+        cancel: CancellationToken,
+    ) -> TokenStream {
+        Box::pin(self.complete(prompt, max_tokens, stop_tokens, cancel))
     }
 }
 
 // ─── OmniProvider ─────────────────────────────────────────────────────────────
 
-/// A provider backed by `omniference::OmniferenceService`.
+/// A provider backed by `omniference::OmniferenceService` (chat path) and a
+/// hand-rolled `reqwest` client (raw completions path).
 ///
-/// Construction is synchronous — the `OmniferenceService` itself only wires up
-/// the adapter registry at startup; no network calls are made until the first
-/// `complete` or `chat` request. Provider configuration is embedded directly
-/// in every `ChatRequestIR` so no explicit `register_provider` call is needed.
-///
-/// `OmniferenceService` is `Clone + Send + Sync + 'static` (all internal state
-/// is behind `Arc`s) so `OmniProvider` satisfies the `Provider` bounds.
+/// `OmniferenceService` is `Clone + Send + Sync + 'static` so `OmniProvider`
+/// satisfies the `Provider` bounds.
 pub struct OmniProvider {
     /// Shared, cheaply-cloneable service that holds the adapter registry.
     service: OmniferenceService,
@@ -155,104 +180,13 @@ impl OmniProvider {
 // ─── Provider impl ────────────────────────────────────────────────────────────
 
 impl Provider for OmniProvider {
-    fn complete(
-        &self,
-        ctx: CompletionContext,
-        cancel: CancellationToken,
-    ) -> impl Stream<Item = Result<String, ProviderError>> + Send + 'static {
-        let service = self.service.clone();
-        let model_ref = self.completion_model_ref.clone();
-
-        stream! {
-            let model_id = model_ref.model_id.clone();
-            let base_url = model_ref.provider.endpoint.base_url.clone();
-            info!(
-                model = %model_id,
-                base_url = %base_url,
-                filepath = %ctx.filepath,
-                language = %ctx.language,
-                prefix_len = ctx.prefix.len(),
-                suffix_len = ctx.suffix.len(),
-                "completion request starting"
-            );
-
-            let messages = vec![
-                OmniMessage {
-                    role: Role::System,
-                    parts: vec![ContentPart::Text(
-                        "You are a code completion engine. Complete the code at the cursor. \
-                         Output ONLY the completion text, no explanations, no markdown fences."
-                            .to_string(),
-                    )],
-                    name: None,
-                },
-                OmniMessage {
-                    role: Role::User,
-                    parts: vec![ContentPart::Text(ctx.to_fim_prompt())],
-                    name: None,
-                },
-            ];
-
-            let request = build_request(model_ref, messages);
-
-            let result = tokio::select! {
-                r = service.chat(request) => r,
-                _ = cancel.cancelled() => {
-                    debug!(model = %model_id, "completion cancelled before request sent");
-                    yield Err(ProviderError::Cancelled);
-                    return;
-                }
-            };
-
-            match result {
-                Err(e) => {
-                    warn!(model = %model_id, error = %e, "completion request failed");
-                    yield Err(ProviderError::Api { status: 0, message: e });
-                }
-                Ok(mut s) => {
-                    debug!(model = %model_id, "completion stream opened, receiving tokens");
-                    let mut token_count = 0usize;
-                    let mut total_chars = 0usize;
-                    loop {
-                        tokio::select! {
-                            event = s.next() => match event {
-                                Some(StreamEvent::TextDelta { content }) if !content.is_empty() => {
-                                    token_count += 1;
-                                    total_chars += content.len();
-                                    trace!(model = %model_id, token = %content, "completion token received");
-                                    yield Ok(content);
-                                }
-                                Some(StreamEvent::Error { code, message }) => {
-                                    warn!(model = %model_id, code = %code, message = %message, "completion stream error");
-                                    yield Err(ProviderError::Api {
-                                        status: 0,
-                                        message: format!("{code}: {message}"),
-                                    });
-                                    return;
-                                }
-                                Some(StreamEvent::Done) | None => {
-                                    info!(
-                                        model = %model_id,
-                                        tokens = token_count,
-                                        total_chars = total_chars,
-                                        "completion stream finished"
-                                    );
-                                    return;
-                                }
-                                Some(_) => {} // token counts, metadata, etc.
-                            },
-                            _ = cancel.cancelled() => {
-                                debug!(model = %model_id, tokens_so_far = token_count, "completion stream cancelled");
-                                yield Err(ProviderError::Cancelled);
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
+    /// Chat request via `/v1/chat/completions`.
+    ///
+    /// Converts the caller-supplied `Vec<Message>` into the `omniference`
+    /// `ChatRequestIR` format and streams tokens back.  Uses `model_ref`
+    /// (the main model) so that chat / NES requests are served by the
+    /// higher-capability model when the user has configured a separate,
+    /// smaller completion model.
     fn chat(
         &self,
         messages: Vec<Message>,
@@ -271,8 +205,8 @@ impl Provider for OmniProvider {
                 "chat request starting"
             );
 
-            let omni_msgs: Vec<OmniMessage> = messages.iter().map(to_omni_message).collect();
-            let request = build_request(model_ref, omni_msgs);
+            let omni_messages: Vec<OmniMessage> = messages.iter().map(to_omni_message).collect();
+            let request = build_request(model_ref, omni_messages);
 
             let result = tokio::select! {
                 r = service.chat(request) => r,
@@ -318,7 +252,7 @@ impl Provider for OmniProvider {
                                     );
                                     return;
                                 }
-                                Some(_) => {}
+                                Some(_) => {} // token counts, metadata, etc.
                             },
                             _ = cancel.cancelled() => {
                                 debug!(model = %model_id, tokens_so_far = token_count, "chat stream cancelled");
@@ -326,6 +260,137 @@ impl Provider for OmniProvider {
                                 return;
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Raw text completion via `/v1/completions`.
+    ///
+    /// Sends `prompt` as a plain string without any chat-template wrapping.
+    /// Required for FIM prompts and for base models (Zeta1, Zeta2) whose
+    /// special tokens must appear at the very start of the input.
+    ///
+    /// Uses `completion_model_ref` so that inline completions can be served
+    /// by a separate, faster model when one is configured.
+    fn complete(
+        &self,
+        prompt: String,
+        max_tokens: u32,
+        stop_tokens: Vec<String>,
+        cancel: CancellationToken,
+    ) -> impl Stream<Item = Result<String, ProviderError>> + Send + 'static {
+        let base_url = self.completion_model_ref.provider.endpoint.base_url.clone();
+        let api_key = self.completion_model_ref.provider.endpoint.api_key.clone();
+        let model_id = self.completion_model_ref.model_id.clone();
+
+        stream! {
+            let url = format!("{}/v1/completions", base_url.trim_end_matches('/'));
+            info!(
+                model = %model_id,
+                base_url = %base_url,
+                prompt_len = prompt.len(),
+                max_tokens = max_tokens,
+                stop_count = stop_tokens.len(),
+                "raw completion request starting"
+            );
+
+            // Build the JSON body.  Only include "stop" when the list is
+            // non-empty — some servers reject an explicit empty array.
+            let mut body = serde_json::json!({
+                "model": model_id,
+                "prompt": prompt,
+                "stream": true,
+                "max_tokens": max_tokens,
+            });
+            if !stop_tokens.is_empty() {
+                body["stop"] = serde_json::json!(stop_tokens);
+            }
+
+            let client = reqwest::Client::new();
+            let mut req_builder = client.post(&url).json(&body);
+            if let Some(key) = &api_key {
+                req_builder = req_builder.bearer_auth(key);
+            }
+
+            let response = tokio::select! {
+                r = req_builder.send() => match r {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(model = %model_id, error = %e, "raw completion HTTP request failed");
+                        yield Err(ProviderError::Http(e.to_string()));
+                        return;
+                    }
+                },
+                _ = cancel.cancelled() => {
+                    debug!(model = %model_id, "raw completion cancelled before request sent");
+                    yield Err(ProviderError::Cancelled);
+                    return;
+                }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                let message = response.text().await.unwrap_or_default();
+                warn!(model = %model_id, status = status, %message, "raw completion error response");
+                yield Err(ProviderError::Api { status, message });
+                return;
+            }
+
+            // Parse the SSE stream from `/v1/completions`.
+            // Each event: {"choices":[{"text":"<token>","index":0,...}]}
+            // Different from chat completions which use `delta.content`.
+            let mut event_stream = response.bytes_stream().eventsource();
+            let mut token_count = 0usize;
+
+            loop {
+                tokio::select! {
+                    event = event_stream.next() => match event {
+                        None => {
+                            info!(model = %model_id, tokens = token_count, "raw completion stream finished");
+                            return;
+                        }
+                        Some(Err(e)) => {
+                            warn!(model = %model_id, error = %e, "raw completion SSE error");
+                            yield Err(ProviderError::Http(e.to_string()));
+                            return;
+                        }
+                        Some(Ok(event)) => {
+                            if event.data == "[DONE]" {
+                                info!(model = %model_id, tokens = token_count, "raw completion stream done");
+                                return;
+                            }
+                            match serde_json::from_str::<serde_json::Value>(&event.data) {
+                                Err(e) => {
+                                    warn!(
+                                        model = %model_id,
+                                        error = %e,
+                                        data = %event.data,
+                                        "raw completion JSON parse error — skipping event"
+                                    );
+                                }
+                                Ok(value) => {
+                                    if let Some(text) = value
+                                        .get("choices")
+                                        .and_then(|c| c.get(0))
+                                        .and_then(|c| c.get("text"))
+                                        .and_then(|t| t.as_str())
+                                    {
+                                        if !text.is_empty() {
+                                            token_count += 1;
+                                            trace!(model = %model_id, token = %text, "raw completion token");
+                                            yield Ok(text.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    _ = cancel.cancelled() => {
+                        debug!(model = %model_id, tokens_so_far = token_count, "raw completion stream cancelled");
+                        yield Err(ProviderError::Cancelled);
+                        return;
                     }
                 }
             }

@@ -15,9 +15,12 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
         var apiKey: String = "",
         var model: String = "qwen2.5-coder:7b",
         var completionModel: String = "",
-        var autocompleteEnabled: Boolean = true,
+        var autocompleteEnabled: Boolean = false,
         var nesEnabled: Boolean = true,
         var nesDebounceMs: Int = 300,
+        var nesPromptStyle: String = "generic",
+        /** "completions" → /v1/completions (default); "chat_completions" → /v1/chat/completions */
+        var completionEndpoint: String = "completions",
     )
 
     private var state = State()
@@ -49,6 +52,14 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
     var nesDebounceMs: Int
         get() = state.nesDebounceMs
         set(v) { state = state.copy(nesDebounceMs = v) }
+
+    var nesPromptStyle: String
+        get() = state.nesPromptStyle
+        set(v) { state = state.copy(nesPromptStyle = v) }
+
+    var completionEndpoint: String
+        get() = state.completionEndpoint
+        set(v) { state = state.copy(completionEndpoint = v) }
 
     override fun getState() = state
     override fun loadState(state: State) { this.state = state }

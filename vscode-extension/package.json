@@ -32,6 +32,16 @@
           "default": "",
           "description": "Faster model for inline completions (falls back to main model if empty)"
         },
+        "oxidecode.provider.completionEndpoint": {
+          "type": "string",
+          "enum": ["completions", "chat_completions"],
+          "enumDescriptions": [
+            "Use /v1/completions (default). Sends the raw FIM prompt without chat-template framing, which avoids tokenizer corruption for most local models.",
+            "Use /v1/chat/completions. Applies the model's chat template before inference. Use only for hosted models that do not expose the raw completions endpoint."
+          ],
+          "default": "completions",
+          "description": "HTTP endpoint used for inference requests."
+        },
         "oxidecode.autocomplete.enabled": {
           "type": "boolean",
           "default": true,
@@ -51,6 +61,17 @@
           "type": "number",
           "default": 300,
           "description": "Milliseconds to wait after an edit before requesting an NES prediction"
+        },
+        "oxidecode.nes.promptStyle": {
+          "type": "string",
+          "enum": ["generic", "zeta1", "zeta2"],
+          "enumDescriptions": [
+            "Generic JSON format — the default OxideCode format. Works with any instruction-following model.",
+            "Zeta1 instruction format — Zed's legacy edit-prediction prompt. Works best with instruction-tuned models and the original zeta fine-tune.",
+            "Zeta2 SPM FIM format — Zed's modern suffix-prefix-middle format. Best results with zed-industries/zeta-2 or Seed-Coder-based models."
+          ],
+          "default": "generic",
+          "description": "Prompt format used by the NES engine when querying the model."
         }
       }
     },

@@ -46,9 +46,13 @@ tasks {
             else -> "so"
         }
         val prefix = if (os.contains("win")) "" else "lib"
+
         from("${project.projectDir}/../target/release/${prefix}oxidecode_jvm.$ext")
-        into("src/main/resources/native")
+        into("${project.projectDir}/src/main/resources/native")
         rename { "oxidecode_jvm.$ext" }
+
+        // Force Gradle to always re-run this task, never treat it as up-to-date
+        outputs.upToDateWhen { false }
     }
 
     processResources { dependsOn(copyNativeLib) }

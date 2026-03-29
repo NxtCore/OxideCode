@@ -51,6 +51,8 @@ class OxideCompletionContributor : CompletionContributor() {
                 suffix = suffix,
                 language = language,
                 filepath = filepath,
+                completionEndpoint = settings.completionEndpoint,
+                promptStyle = settings.nesPromptStyle,
             )
         }.getOrNull()
 
@@ -59,10 +61,6 @@ class OxideCompletionContributor : CompletionContributor() {
                 LookupElementBuilder.create(completion)
                     .withPresentableText(completion.lines().firstOrNull() ?: completion)
                     .withTailText(" (OxideCode)", true)
-                    .withInsertHandler { ctx, _ ->
-                        ctx.document.insertString(ctx.tailOffset, completion)
-                        ctx.editor.caretModel.moveToOffset(ctx.tailOffset + completion.length)
-                    }
             )
         }
     }
