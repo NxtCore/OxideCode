@@ -1,117 +1,121 @@
 {
-  "name": "oxidecode",
-  "displayName": "OxideCode",
-  "description": "AI autocomplete and next-edit suggestions powered by local and cloud models",
-  "version": "0.1.0",
-  "publisher": "oxidecode",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["AI", "Other"],
-  "activationEvents": ["onStartupFinished"],
-  "main": "./dist/extension.js",
-  "contributes": {
-    "configuration": {
-      "title": "OxideCode",
-      "properties": {
-        "oxidecode.provider.baseUrl": {
-          "type": "string",
-          "default": "http://localhost:11434",
-          "description": "Base URL for OpenAI-compatible API (Ollama, LM Studio, OpenAI, etc.)"
-        },
-        "oxidecode.provider.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "API key (leave empty for Ollama/local models)"
-        },
-        "oxidecode.provider.model": {
-          "type": "string",
-          "default": "qwen2.5-coder:7b",
-          "description": "Model used for chat and NES"
-        },
-        "oxidecode.provider.completionModel": {
-          "type": "string",
-          "default": "",
-          "description": "Faster model for inline completions (falls back to main model if empty)"
-        },
-        "oxidecode.provider.completionEndpoint": {
-          "type": "string",
-          "enum": ["completions", "chat_completions"],
-          "enumDescriptions": [
-            "Use /v1/completions (default). Sends the raw FIM prompt without chat-template framing, which avoids tokenizer corruption for most local models.",
-            "Use /v1/chat/completions. Applies the model's chat template before inference. Use only for hosted models that do not expose the raw completions endpoint."
-          ],
-          "default": "completions",
-          "description": "HTTP endpoint used for inference requests."
-        },
-        "oxidecode.autocomplete.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable inline AI completions"
-        },
-        "oxidecode.autocomplete.debounceMs": {
-          "type": "number",
-          "default": 120,
-          "description": "Milliseconds to wait after typing before requesting a completion"
-        },
-        "oxidecode.nes.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable Next Edit Suggestions"
-        },
-        "oxidecode.nes.debounceMs": {
-          "type": "number",
-          "default": 300,
-          "description": "Milliseconds to wait after an edit before requesting an NES prediction"
-        },
-        "oxidecode.nes.promptStyle": {
-          "type": "string",
-          "enum": ["generic", "zeta1", "zeta2"],
-          "enumDescriptions": [
-            "Generic JSON format — the default OxideCode format. Works with any instruction-following model.",
-            "Zeta1 instruction format — Zed's legacy edit-prediction prompt. Works best with instruction-tuned models and the original zeta fine-tune.",
-            "Zeta2 SPM FIM format — Zed's modern suffix-prefix-middle format. Best results with zed-industries/zeta-2 or Seed-Coder-based models."
-          ],
-          "default": "generic",
-          "description": "Prompt format used by the NES engine when querying the model."
-        }
-      }
-    },
-    "commands": [
-      {
-        "command": "oxidecode.acceptNes",
-        "title": "OxideCode: Accept Next Edit Suggestion"
-      },
-      {
-        "command": "oxidecode.dismissNes",
-        "title": "OxideCode: Dismiss Next Edit Suggestion"
-      },
-      {
-        "command": "oxidecode.clearNesHistory",
-        "title": "OxideCode: Clear NES Edit History"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "oxidecode.acceptNes",
-        "key": "tab",
-        "when": "oxidecode.nesVisible && !inlineSuggestionVisible"
-      },
-      {
-        "command": "oxidecode.dismissNes",
-        "key": "escape",
-        "when": "oxidecode.nesVisible"
-      }
-    ]
-  },
-  "scripts": {
-    "build": "node scripts/build-native.js && esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:./oxidecode.node --minify",
-    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:./oxidecode.node --watch",
-    "package": "vsce package"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
-    "esbuild": "^0.20.0",
-    "typescript": "^5.3.0",
-    "@vscode/vsce": "^2.24.0"
-  }
+	"name": "oxidecode",
+	"displayName": "OxideCode",
+	"description": "AI autocomplete and next-edit suggestions powered by local and cloud models",
+	"version": "0.1.0",
+	"publisher": "oxidecode",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"AI",
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./dist/extension.js",
+	"contributes": {
+		"configuration": {
+			"title": "OxideCode",
+			"properties": {
+				"oxidecode.provider.baseUrl": {
+					"type": "string",
+					"default": "http://localhost:11434",
+					"description": "Base URL for OpenAI-compatible API (Ollama, LM Studio, OpenAI, etc.)"
+				},
+				"oxidecode.provider.apiKey": {
+					"type": "string",
+					"default": "",
+					"description": "API key (leave empty for Ollama/local models)"
+				},
+				"oxidecode.provider.model": {
+					"type": "string",
+					"default": "qwen2.5-coder:7b",
+					"description": "Model used for chat and NES"
+				},
+				"oxidecode.provider.completionModel": {
+					"type": "string",
+					"default": "",
+					"description": "Faster model for inline completions (falls back to main model if empty)"
+				},
+				"oxidecode.provider.completionEndpoint": {
+					"type": "string",
+					"enum": [
+						"completions",
+						"chat_completions"
+					],
+					"enumDescriptions": [
+						"Use /v1/completions (default). Sends the raw FIM prompt without chat-template framing, which avoids tokenizer corruption for most local models.",
+						"Use /v1/chat/completions. Applies the model's chat template before inference. Use only for hosted models that do not expose the raw completions endpoint."
+					],
+					"default": "completions",
+					"description": "HTTP endpoint used for inference requests."
+				},
+				"oxidecode.nes.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable Next Edit Suggestions"
+				},
+				"oxidecode.nes.debounceMs": {
+					"type": "number",
+					"default": 300,
+					"description": "Milliseconds to wait after an edit before requesting an NES prediction"
+				},
+				"oxidecode.nes.promptStyle": {
+					"type": "string",
+					"enum": [
+						"generic",
+						"zeta2",
+						"sweep"
+					],
+					"enumDescriptions": [
+						"Generic JSON format — the default OxideCode format. Works with any instruction-following model.",
+						"Zeta2 SPM FIM format — Zed's modern suffix-prefix-middle format. Best results with zed-industries/zeta-2 or Seed-Coder-based models.",
+						"Sweep FIM format — Sweep Shutodown model, best results with the 7B model, 1.5B are also good."
+					],
+					"default": "generic",
+					"description": "Prompt format used by the NES engine when querying the model."
+				}
+			}
+		},
+		"commands": [
+			{
+				"command": "oxidecode.acceptNes",
+				"title": "OxideCode: Accept Next Edit Suggestion"
+			},
+			{
+				"command": "oxidecode.dismissNes",
+				"title": "OxideCode: Dismiss Next Edit Suggestion"
+			},
+			{
+				"command": "oxidecode.clearNesHistory",
+				"title": "OxideCode: Clear NES Edit History"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "oxidecode.acceptNes",
+				"key": "tab",
+				"when": "oxidecode.nesVisible && !inlineSuggestionVisible"
+			},
+			{
+				"command": "oxidecode.dismissNes",
+				"key": "escape",
+				"when": "oxidecode.nesVisible"
+			}
+		]
+	},
+	"scripts": {
+		"build": "node scripts/build-native.js && esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:./oxidecode.node --minify",
+		"watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:./oxidecode.node --watch",
+		"package": "vsce package"
+	},
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"@types/vscode": "^1.85.0",
+		"esbuild": "^0.20.0",
+		"typescript": "^5.3.0",
+		"@vscode/vsce": "^2.24.0"
+	}
 }

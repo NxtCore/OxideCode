@@ -13,7 +13,6 @@ class OxideCodeConfigurable : Configurable {
     private val apiKeyField = JPasswordField(40)
     private val modelField = JTextField(40)
     private val completionModelField = JTextField(40)
-    private val autocompleteEnabledBox = JCheckBox("Enable inline completions")
     private val nesEnabledBox = JCheckBox("Enable Next Edit Suggestions")
     private val nesDebounceMsField = JSpinner(SpinnerNumberModel(300, 50, 5000, 50))
     private val nesPromptStyleBox = JComboBox(arrayOf("generic", "zeta1", "zeta2"))
@@ -34,7 +33,6 @@ class OxideCodeConfigurable : Configurable {
                 completionEndpointBox,
             )
             .addSeparator()
-            .addComponent(autocompleteEnabledBox)
             .addComponent(nesEnabledBox)
             .addLabeledComponent("NES debounce (ms):", nesDebounceMsField)
             .addLabeledComponent("NES prompt style:", nesPromptStyleBox)
@@ -44,14 +42,13 @@ class OxideCodeConfigurable : Configurable {
 
     override fun isModified(): Boolean =
         baseUrlField.text != settings.baseUrl ||
-        String(apiKeyField.password) != settings.apiKey ||
-        modelField.text != settings.model ||
-        completionModelField.text != settings.completionModel ||
-        autocompleteEnabledBox.isSelected != settings.autocompleteEnabled ||
-        nesEnabledBox.isSelected != settings.nesEnabled ||
-        (nesDebounceMsField.value as Int) != settings.nesDebounceMs ||
-        nesPromptStyleBox.selectedItem as String != settings.nesPromptStyle ||
-        completionEndpointBox.selectedItem as String != settings.completionEndpoint
+                String(apiKeyField.password) != settings.apiKey ||
+                modelField.text != settings.model ||
+                completionModelField.text != settings.completionModel ||
+                nesEnabledBox.isSelected != settings.nesEnabled ||
+                (nesDebounceMsField.value as Int) != settings.nesDebounceMs ||
+                nesPromptStyleBox.selectedItem as String != settings.nesPromptStyle ||
+                completionEndpointBox.selectedItem as String != settings.completionEndpoint
 
     @Throws(ConfigurationException::class)
     override fun apply() {
@@ -59,7 +56,6 @@ class OxideCodeConfigurable : Configurable {
         settings.apiKey = String(apiKeyField.password)
         settings.model = modelField.text.trim()
         settings.completionModel = completionModelField.text.trim()
-        settings.autocompleteEnabled = autocompleteEnabledBox.isSelected
         settings.nesEnabled = nesEnabledBox.isSelected
         settings.nesDebounceMs = nesDebounceMsField.value as Int
         settings.nesPromptStyle = nesPromptStyleBox.selectedItem as String
@@ -71,7 +67,6 @@ class OxideCodeConfigurable : Configurable {
         apiKeyField.text = settings.apiKey
         modelField.text = settings.model
         completionModelField.text = settings.completionModel
-        autocompleteEnabledBox.isSelected = settings.autocompleteEnabled
         nesEnabledBox.isSelected = settings.nesEnabled
         nesDebounceMsField.value = settings.nesDebounceMs
         nesPromptStyleBox.selectedItem = settings.nesPromptStyle

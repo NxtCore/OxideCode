@@ -12,7 +12,7 @@ class AcceptNesAction : AnAction() {
         } ?: return
         when {
             InlineCompletionManager.isShowing(editor) -> InlineCompletionManager.accept(editor)
-            NesHintManager.isShowing(editor) -> NesHintManager.accept(editor)
+            NesHintManager.isShowing(editor) -> NesHintManager.acceptOrJump(editor)
         }
     }
 
