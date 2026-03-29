@@ -1,4 +1,5 @@
 use futures_util::StreamExt;
+use std::ops::Range;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -67,9 +68,175 @@ fn common_suffix_len(a: &str, b: &str, prefix_len: usize) -> usize {
         .map(|(ch, _)| ch.len_utf8())
         .sum();
     // Clamp so suffix never overlaps the prefix region.
-    suffix_bytes
-        .min(a.len() - a_prefix)
-        .min(b.len() - b_prefix)
+    suffix_bytes.min(a.len() - a_prefix).min(b.len() - b_prefix)
+}
+
+#[derive(Debug, Clone)]
+struct DiffHunk {
+    old_range: Range<usize>,
+    new_range: Range<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineOp {
+    Equal,
+    Delete,
+    Insert,
+}
+
+fn line_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut offset = 0;
+
+    for segment in text.split_inclusive('\n') {
+        let end = offset + segment.len();
+        ranges.push(offset..end);
+        offset = end;
+    }
+
+    if text.is_empty() {
+        return ranges;
+    }
+
+    if !text.ends_with('\n') && ranges.is_empty() {
+        ranges.push(0..text.len());
+    }
+
+    ranges
+}
+
+fn line_index_to_offset(ranges: &[Range<usize>], text_len: usize, line_index: usize) -> usize {
+    ranges.get(line_index).map(|range| range.start).unwrap_or(text_len)
+}
+
+fn line_span_to_byte_range(
+    ranges: &[Range<usize>],
+    text_len: usize,
+    start_line: usize,
+    end_line: usize,
+) -> Range<usize> {
+    if start_line >= end_line {
+        let offset = line_index_to_offset(ranges, text_len, start_line);
+        offset..offset
+    } else {
+        let start = ranges.get(start_line).map(|range| range.start).unwrap_or(text_len);
+        let end = ranges
+            .get(end_line.saturating_sub(1))
+            .map(|range| range.end)
+            .unwrap_or(text_len);
+        start..end
+    }
+}
+
+fn compute_diff_hunks(old_content: &str, new_content: &str) -> Vec<DiffHunk> {
+    let old_lines: Vec<&str> = old_content.split_inclusive('\n').collect();
+    let new_lines: Vec<&str> = new_content.split_inclusive('\n').collect();
+    let old_ranges = line_ranges(old_content);
+    let new_ranges = line_ranges(new_content);
+
+    let n = old_lines.len();
+    let m = new_lines.len();
+    let mut lcs = vec![vec![0usize; m + 1]; n + 1];
+
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if old_lines[i] == new_lines[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+
+    let mut ops = Vec::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < n && j < m {
+        if old_lines[i] == new_lines[j] {
+            ops.push(LineOp::Equal);
+            i += 1;
+            j += 1;
+        } else if lcs[i + 1][j] >= lcs[i][j + 1] {
+            ops.push(LineOp::Delete);
+            i += 1;
+        } else {
+            ops.push(LineOp::Insert);
+            j += 1;
+        }
+    }
+    while i < n {
+        ops.push(LineOp::Delete);
+        i += 1;
+    }
+    while j < m {
+        ops.push(LineOp::Insert);
+        j += 1;
+    }
+
+    let mut hunks = Vec::new();
+    let (mut old_line, mut new_line) = (0usize, 0usize);
+    let mut hunk_start: Option<(usize, usize)> = None;
+
+    for op in ops {
+        match op {
+            LineOp::Equal => {
+                if let Some((old_start, new_start)) = hunk_start.take() {
+                    hunks.push(DiffHunk {
+                        old_range: line_span_to_byte_range(
+                            &old_ranges,
+                            old_content.len(),
+                            old_start,
+                            old_line,
+                        ),
+                        new_range: line_span_to_byte_range(
+                            &new_ranges,
+                            new_content.len(),
+                            new_start,
+                            new_line,
+                        ),
+                    });
+                }
+                old_line += 1;
+                new_line += 1;
+            }
+            LineOp::Delete => {
+                hunk_start.get_or_insert((old_line, new_line));
+                old_line += 1;
+            }
+            LineOp::Insert => {
+                hunk_start.get_or_insert((old_line, new_line));
+                new_line += 1;
+            }
+        }
+    }
+
+    if let Some((old_start, new_start)) = hunk_start.take() {
+        hunks.push(DiffHunk {
+            old_range: line_span_to_byte_range(&old_ranges, old_content.len(), old_start, old_line),
+            new_range: line_span_to_byte_range(&new_ranges, new_content.len(), new_start, new_line),
+        });
+    }
+
+    hunks
+}
+
+fn range_distance_to_offset(range: &Range<usize>, offset: usize) -> usize {
+    if offset < range.start {
+        range.start - offset
+    } else if offset > range.end {
+        offset - range.end
+    } else {
+        0
+    }
+}
+
+fn select_best_hunk(hunks: Vec<DiffHunk>, cursor_offset: usize) -> Option<DiffHunk> {
+    hunks.into_iter().min_by_key(|hunk| {
+        (
+            range_distance_to_offset(&hunk.old_range, cursor_offset),
+            hunk.old_range.start,
+            hunk.new_range.start,
+        )
+    })
 }
 
 fn offset_to_line_col(text: &str, offset: usize) -> (u32, u32) {
@@ -394,6 +561,8 @@ impl NesEngine {
             "NES Zeta2 prompt assembled"
         );
 
+        debug!("raw prompt" = %prompt);
+
         // Zeta2 is a base model fine-tuned from Seed-Coder-8B-Base.  Its SPM
         // FIM prompt must be sent as a raw string to /v1/completions.
         let raw = self
@@ -502,23 +671,31 @@ impl NesEngine {
             return None;
         }
 
-        // Find the narrowest changed span using a common-prefix / common-suffix
-        // trim.  This gives us the precise replacement range within the editable
-        // region so the IDE can render and apply a tight inline hint rather than
-        // replacing the entire region.
-        let prefix_len = common_prefix_len(&old_content, &new_content);
-        let suffix_len = common_suffix_len(&old_content, &new_content, prefix_len);
+        let cursor_offset = region.cursor_byte_offset.min(old_content.len());
+        let selected_hunk = select_best_hunk(compute_diff_hunks(&old_content, &new_content), cursor_offset)
+            .unwrap_or(DiffHunk {
+                old_range: 0..old_content.len(),
+                new_range: 0..new_content.len(),
+            });
 
-        let old_diff_start = prefix_len;
-        let old_diff_end = old_content.len().saturating_sub(suffix_len);
-        let new_diff_start = prefix_len;
-        let new_diff_end = new_content.len().saturating_sub(suffix_len);
+        let old_changed = &old_content[selected_hunk.old_range.clone()];
+        let new_changed = &new_content[selected_hunk.new_range.clone()];
 
-        // Guard against a degenerate case where the suffix trimming overshoots
-        // (can happen if the two strings have the same content but different
-        // lengths due to trailing-newline differences).
-        let old_diff_end = old_diff_end.max(old_diff_start);
-        let new_diff_end = new_diff_end.max(new_diff_start);
+        let prefix_len = common_prefix_len(old_changed, new_changed);
+        let suffix_len = common_suffix_len(old_changed, new_changed, prefix_len);
+
+        let old_diff_start = selected_hunk.old_range.start + prefix_len;
+        let old_diff_end = selected_hunk
+            .old_range
+            .end
+            .saturating_sub(suffix_len)
+            .max(old_diff_start);
+        let new_diff_start = selected_hunk.new_range.start + prefix_len;
+        let new_diff_end = selected_hunk
+            .new_range
+            .end
+            .saturating_sub(suffix_len)
+            .max(new_diff_start);
 
         let replacement = new_content[new_diff_start..new_diff_end].to_string();
         let (start_rel_line, start_rel_col) = offset_to_line_col(&old_content, old_diff_start);

@@ -39,13 +39,89 @@ class NesEditorListener : EditorFactoryListener {
     }
 }
 
+private const val MAX_HISTORY_LEN = 8
+private const val EDIT_COALESCE_WINDOW_MS = 1_000L
+
+private data class PendingEditDelta(
+    val filepath: String,
+    var startLine: Int,
+    var startCol: Int,
+    var startOffset: Int,
+    var removed: String,
+    var inserted: String,
+    var fileContent: String,
+    var timestampMs: Long,
+) {
+    fun toEditDelta(): EditDelta = EditDelta(
+        filepath = filepath,
+        startLine = startLine,
+        startCol = startCol,
+        removed = removed,
+        inserted = inserted,
+        fileContent = fileContent,
+        timestampMs = timestampMs,
+    )
+
+    fun tryMerge(next: PendingEditDelta): Boolean {
+        if (filepath != next.filepath) return false
+        if (next.timestampMs - timestampMs > EDIT_COALESCE_WINDOW_MS) return false
+
+        val merged = when {
+            removed.isEmpty() && next.removed.isEmpty() -> mergeInsertions(next)
+            inserted.isEmpty() && next.inserted.isEmpty() -> mergeDeletions(next)
+            next.removed.isEmpty() -> mergeTrailingInsertion(next)
+            else -> false
+        }
+
+        if (merged) {
+            fileContent = next.fileContent
+            timestampMs = next.timestampMs
+        }
+
+        return merged
+    }
+
+    private fun mergeInsertions(next: PendingEditDelta): Boolean {
+        val expectedOffset = startOffset + inserted.length
+        if (next.startOffset != expectedOffset) return false
+        inserted += next.inserted
+        return true
+    }
+
+    private fun mergeDeletions(next: PendingEditDelta): Boolean {
+        return when {
+            next.startOffset == startOffset -> {
+                removed += next.removed
+                true
+            }
+            next.startOffset + next.removed.length == startOffset -> {
+                removed = next.removed + removed
+                startOffset = next.startOffset
+                startLine = next.startLine
+                startCol = next.startCol
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun mergeTrailingInsertion(next: PendingEditDelta): Boolean {
+        val expectedOffset = startOffset + inserted.length
+        if (next.startOffset != expectedOffset) return false
+        inserted += next.inserted
+        return true
+    }
+}
+
 private class NesDocumentListener(private val editor: Editor) : DocumentListener {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val settings get() = OxideCodeSettings.instance
     private val bridge get() = service<CoreBridge>()
+    private val historyLock = Any()
 
-    private val history = ArrayDeque<EditDelta>(8)
+    private val history = ArrayDeque<EditDelta>(MAX_HISTORY_LEN)
+    private var pendingDelta: PendingEditDelta? = null
     private var debounceJob: Job? = null
 
     override fun documentChanged(event: DocumentEvent) {
@@ -68,18 +144,23 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 } ?: vf.path
             } ?: return
 
-        val delta = EditDelta(
+        val delta = PendingEditDelta(
             filepath = filepath,
             startLine = startPos.line,
             startCol = startPos.column,
+            startOffset = offset,
             removed = removed,
             inserted = inserted,
             fileContent = doc.text,
             timestampMs = System.currentTimeMillis(),
         )
 
-        if (history.size >= 8) history.removeFirst()
-        history.addLast(delta)
+        synchronized(historyLock) {
+            if (pendingDelta?.tryMerge(delta) != true) {
+                flushPendingDeltaLocked()
+                pendingDelta = delta
+            }
+        }
 
         NesHintManager.dismiss(editor)
         schedulePredict(editor, filepath, doc.text)
@@ -94,7 +175,10 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 editor.caretModel.logicalPosition
             }
 
-            val deltasJson = Json.encodeToString(history.toList())
+            val deltasJson = synchronized(historyLock) {
+                flushPendingDeltaLocked()
+                Json.encodeToString(history.toList())
+            }
             val result = runCatching {
                 bridge.predictNextEdit(
                     baseUrl = settings.baseUrl,
@@ -120,6 +204,19 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 }
             }
         }
+    }
+
+    private fun flushPendingDelta() {
+        synchronized(historyLock) {
+            flushPendingDeltaLocked()
+        }
+    }
+
+    private fun flushPendingDeltaLocked() {
+        val delta = pendingDelta?.toEditDelta() ?: return
+        if (history.size >= MAX_HISTORY_LEN) history.removeFirst()
+        history.addLast(delta)
+        pendingDelta = null
     }
 
     private fun guessLanguage(filepath: String): String =
