@@ -3,9 +3,23 @@
     <name>OxideCode</name>
     <vendor>OxideCode</vendor>
     <description>AI autocomplete and Next Edit Suggestions powered by local and cloud models.</description>
+    <change-notes><![CDATA[
+        <h3>Version 0.1.0</h3>
+        <ul>
+            <li>Initial release with AI autocomplete</li>
+            <li>Next Edit Suggestions (NES) support</li>
+            <li>Support for local and cloud models</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.lang</depends>
+
+    <application-components>
+        <component>
+            <implementation-class>com.oxidecode.CoreBridge</implementation-class>
+        </component>
+    </application-components>
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationService

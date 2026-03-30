@@ -4,6 +4,7 @@
 	"description": "AI autocomplete and next-edit suggestions powered by local and cloud models",
 	"version": "0.1.0",
 	"publisher": "oxidecode",
+	"icon": "icon.png",
 	"engines": {
 		"vscode": "^1.85.0"
 	},
@@ -11,10 +12,51 @@
 		"AI",
 		"Other"
 	],
+	"keywords": [
+		"ai",
+		"autocomplete",
+		"code-completion",
+		"copilot",
+		"llm",
+		"local-ai",
+		"ollama",
+		"nes",
+		"next-edit-suggestions"
+	],
 	"activationEvents": [
 		"onStartupFinished"
 	],
 	"main": "./dist/extension.js",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/NxtCore/OxideCode.git"
+	},
+	"homepage": "https://github.com/NxtCore/OxideCode#readme",
+	"bugs": {
+		"url": "https://github.com/NxtCore/OxideCode/issues"
+	},
+	"license": "MIT",
+	"marketing": {
+		"color": "#007ACC",
+		"theme": "dark"
+	},
+	"galleryBanner": {
+		"color": "#007ACC",
+		"theme": "dark"
+	},
+	"badges": [
+		{
+			"url": "https://img.shields.io/badge/version-0.1.0-blue",
+			"href": "https://github.com/NxtCore/OxideCode/releases",
+			"description": "Version"
+		},
+		{
+			"url": "https://img.shields.io/badge/license-MIT-green",
+			"href": "https://github.com/NxtCore/OxideCode/blob/main/LICENSE",
+			"description": "License"
+		}
+	],
+	"qna": "https://github.com/NxtCore/OxideCode/discussions",
 	"contributes": {
 		"configuration": {
 			"title": "OxideCode",
