@@ -107,7 +107,7 @@ object NesHintManager {
         val predictionLine = document.getLineNumber(preview.jumpOffset)
         val editOnDifferentLine = predictionLine != caretLine
 
-        // Display mode — three mutually exclusive states in priority order:
+        // Display mode — four mutually exclusive states in priority order:
         //
         // 1. DIFFERENT LINE: show nothing on the current line; TAB-jump hint
         //    appears on the prediction line so the user knows where to go.
@@ -116,14 +116,22 @@ object NesHintManager {
         //    the user hasn't typed yet.  Show the green-pill overlay after the
         //    line end so they can see exactly what will change.
         //
+        // 2b. BEHIND CARET + overlay segments: the diff point is behind the live
+        //    caret on the same line (e.g. Sweep predicted "website" but the user
+        //    typed "webse" — the insertion of "it" is before the trailing "e").
+        //    There is no meaningful ghost text to show at the cursor, so display
+        //    the green-pill overlay immediately (no Tab-jump required) so the
+        //    user can see the correction and Tab-accept it.
+        //
         // 3. TYPING (ghost text): displayOffset matches the live caret, meaning
         //    the text will render right at the cursor.  Show plain italic gray
         //    ghost text.  Covers both pure insertions AND replacement hints where
         //    the user already typed the common prefix (e.g. typed "b", hint says
         //    replace "b" with "bun" — displayOffset lands after "b" = caretOffset).
         //
-        // Otherwise: show nothing (displayOffset drifted from caret — stale).
-        val useOverlay   = !editOnDifferentLine && isJump && preview.overlaySegments.isNotEmpty()
+        // Otherwise: show nothing (displayOffset drifted ahead of caret — stale).
+        val behindCaret  = preview.displayOffset < caretOffset
+        val useOverlay   = !editOnDifferentLine && (isJump || behindCaret) && preview.overlaySegments.isNotEmpty()
         val useGhostText = !editOnDifferentLine && !useOverlay && preview.displayOffset == caretOffset
 
         if (useOverlay) {
