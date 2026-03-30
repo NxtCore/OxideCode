@@ -55,7 +55,7 @@ object NesHintManager {
     var activeHint: NesHint? = null
         private set
 
-    fun show(editor: Editor, hint: NesHint) {
+    fun show(editor: Editor, hint: NesHint, isJump: Boolean = false) {
         dismiss(editor)
         // NES takes priority — remove any autocomplete ghost text first.
         InlineCompletionManager.dismiss(editor)
@@ -102,31 +102,42 @@ object NesHintManager {
             }
         }
 
-        // Decide display mode:
-        //   • Floating overlay (Sweep-style, green pill) — only when the edit is
-        //     at a *different* location from the caret, i.e. the user hasn't
-        //     jumped there yet and isn't actively typing into it.
-        //   • Plain gray ghost text — when the caret is already inside the edit
-        //     range, meaning the user is actively typing at that spot.
         val caretOffset = editor.caretModel.offset
-        val editStart = preview.highlightStartOffset
-        val editEnd = maxOf(preview.highlightEndOffset, editStart)
-        val caretIsAtEdit = caretOffset in editStart..editEnd
-        val useOverlay = preview.overlaySegments.isNotEmpty() && !caretIsAtEdit
+        val caretLine = document.getLineNumber(caretOffset)
+        val predictionLine = document.getLineNumber(preview.jumpOffset)
+        val editOnDifferentLine = predictionLine != caretLine
+
+        // Display mode — three mutually exclusive states in priority order:
+        //
+        // 1. DIFFERENT LINE: show nothing on the current line; TAB-jump hint
+        //    appears on the prediction line so the user knows where to go.
+        //
+        // 2. JUMPED + overlay segments: caret was just moved here by Tab and
+        //    the user hasn't typed yet.  Show the green-pill overlay after the
+        //    line end so they can see exactly what will change.
+        //
+        // 3. TYPING (ghost text): displayOffset matches the live caret, meaning
+        //    the text will render right at the cursor.  Show plain italic gray
+        //    ghost text.  Covers both pure insertions AND replacement hints where
+        //    the user already typed the common prefix (e.g. typed "b", hint says
+        //    replace "b" with "bun" — displayOffset lands after "b" = caretOffset).
+        //
+        // Otherwise: show nothing (displayOffset drifted from caret — stale).
+        val useOverlay   = !editOnDifferentLine && isJump && preview.overlaySegments.isNotEmpty()
+        val useGhostText = !editOnDifferentLine && !useOverlay && preview.displayOffset == caretOffset
 
         if (useOverlay) {
-            // ── Replace/update prediction — caret is elsewhere ───────────────
+            // ── Same line, replace prediction, caret not yet in edit range ────
             // Show the changed word in a green pill floating after the line end.
-            val line = document.getLineNumber(preview.highlightStartOffset.coerceIn(0, document.textLength))
-            val lineEndOffset = document.getLineEndOffset(line)
+            val lineEndOffset = document.getLineEndOffset(predictionLine)
             activeInlineInlay = editor.inlayModel.addAfterLineEndElement(
                 lineEndOffset,
                 true,
                 NesOverlayTextRenderer(preview.overlaySegments)
             )
             activeBlockInlay = null
-        } else {
-            // ── Caret is at the edit / pure insertion — user is typing ────────
+        } else if (useGhostText) {
+            // ── Same line, caret at edit / pure insertion — user is typing ────
             // Show plain italic gray ghost text right after the caret, exactly
             // like a normal autocomplete suggestion.
             val display = GhostTextDisplayParts.from(preview.displayText)
@@ -144,15 +155,21 @@ object NesHintManager {
                         BlockGhostTextRenderer(it, highlighted = false)
                     )
                 }
+        } else {
+            // ── Different line — no overlay or ghost text on the current line ──
+            activeInlineInlay = null
+            activeBlockInlay = null
         }
 
         activeEditor = editor
         activePreview = preview
         activeHint = hint
 
-        val caretLine = document.getLineNumber(editor.caretModel.offset)
-        val predictionLine = document.getLineNumber(preview.jumpOffset)
-        activeJumpHint = if (abs(predictionLine - caretLine) >= MIN_JUMP_HINT_LINE_DISTANCE) {
+        // Always show the TAB jump hint on the prediction line when the edit is
+        // on a different line, regardless of distance.
+        activeJumpHint = if (editOnDifferentLine) {
+            showTabJumpHintInlay(editor, preview.jumpOffset)
+        } else if (abs(predictionLine - caretLine) >= MIN_JUMP_HINT_LINE_DISTANCE) {
             showTabJumpHintInlay(editor, preview.jumpOffset)
         } else {
             null
@@ -168,10 +185,16 @@ object NesHintManager {
         val jumpEnd = maxOf(preview.highlightEndOffset, jumpStart)
 
         if (caretOffset !in jumpStart..jumpEnd) {
+            // Capture the hint before dismiss clears it.
+            val hint = activeHint ?: return
+            // Dismiss the current display (clears inlays, jump hint, etc.) then
+            // move the caret, and re-show with the same hint so the display mode
+            // is recalculated — caret is now on the prediction line, so the
+            // floating overlay will be rendered instead of nothing.
+            dismiss(editor)
             editor.caretModel.moveToOffset(jumpStart)
             editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
-            activeJumpHint?.dispose()
-            activeJumpHint = null
+            show(editor, hint, isJump = true)
             return
         }
 
