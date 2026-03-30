@@ -162,8 +162,15 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
             }
         }
 
-        NesHintManager.dismiss(editor)
-        schedulePredict(editor, filepath, doc.text)
+        // Give the active hint a chance to consume the typed character(s)
+        // before dismissing.  This keeps ghost text alive as the user types
+        // into a completion, and strips auto-inserted closing brackets that
+        // IntelliJ smart-keys inject (e.g. `>` in HTML, `}` in code).
+        val consumed = NesHintManager.consumeTyped(editor, inserted, removed)
+        if (!consumed) {
+            NesHintManager.dismiss(editor)
+            schedulePredict(editor, filepath, doc.text)
+        }
     }
 
     private fun schedulePredict(editor: Editor, filepath: String, content: String) {

@@ -20,6 +20,8 @@ import com.oxidecode.autocomplete.InlineCompletionManager
 import com.oxidecode.editor.BlockGhostTextRenderer
 import com.oxidecode.editor.GhostTextDisplayParts
 import com.oxidecode.editor.InlineGhostTextRenderer
+import com.oxidecode.editor.NesOverlaySegment
+import com.oxidecode.editor.NesOverlayTextRenderer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.awt.Font
@@ -28,6 +30,11 @@ import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTextArea
+import com.intellij.codeInsight.hint.HintManager
+import com.intellij.codeInsight.hint.HintManagerImpl
+import com.intellij.ui.LightweightHint
+import com.oxidecode.editor.TabJumpHintInlayRenderer
+import kotlin.math.abs
 
 /**
  * Global manager for the currently active NES hint in any editor.
@@ -36,11 +43,14 @@ import javax.swing.JTextArea
  */
 object NesHintManager {
 
+    private const val MIN_JUMP_HINT_LINE_DISTANCE = 5
+
     private var activeHighlighter: RangeHighlighter? = null
     private var activeInlineInlay: Inlay<*>? = null
     private var activeBlockInlay: Inlay<*>? = null
     private var activeEditor: Editor? = null
     private var activePopup: JBPopup? = null
+    private var activeJumpHint: Inlay<*>? = null
     private var activePreview: NesDisplayPreview? = null
     var activeHint: NesHint? = null
         private set
@@ -60,45 +70,93 @@ object NesHintManager {
         // understands the highlighted content will be removed.  Insertions and
         // replacements keep the italic gray box style.
         val isDeletion = hint.replacement.isEmpty() && hint.selectionToRemove != null
-        val attrs = TextAttributes().apply {
-            if (isDeletion) {
+        if (isDeletion) {
+            val attrs = TextAttributes().apply {
                 foregroundColor = JBColor(0xCC3333, 0xFF6666)
                 effectType = EffectType.STRIKEOUT
                 effectColor = JBColor(0xCC3333, 0xFF6666)
-            } else {
-                foregroundColor = JBColor.GRAY
-                fontType = Font.ITALIC
-                effectType = EffectType.ROUNDED_BOX
-                effectColor = JBColor.GRAY
+            }
+
+            activeHighlighter = editor.markupModel.addRangeHighlighter(
+                preview.highlightStartOffset,
+                preview.highlightEndOffset,
+                HighlighterLayer.LAST,
+                attrs,
+                HighlighterTargetArea.EXACT_RANGE,
+            ).also { h ->
+                h.gutterIconRenderer = NesGutterIcon(preview)
+                h.errorStripeTooltip = preview.tooltipHtml
+                h.isThinErrorStripeMark = true
+            }
+        } else {
+            activeHighlighter = editor.markupModel.addRangeHighlighter(
+                preview.highlightStartOffset,
+                preview.highlightStartOffset,
+                HighlighterLayer.LAST,
+                null,
+                HighlighterTargetArea.EXACT_RANGE,
+            ).also { h ->
+                h.gutterIconRenderer = NesGutterIcon(preview)
+                h.errorStripeTooltip = preview.tooltipHtml
+                h.isThinErrorStripeMark = true
             }
         }
 
-        val display = GhostTextDisplayParts.from(preview.displayText)
+        // Decide display mode:
+        //   • Floating overlay (Sweep-style, green pill) — only when the edit is
+        //     at a *different* location from the caret, i.e. the user hasn't
+        //     jumped there yet and isn't actively typing into it.
+        //   • Plain gray ghost text — when the caret is already inside the edit
+        //     range, meaning the user is actively typing at that spot.
+        val caretOffset = editor.caretModel.offset
+        val editStart = preview.highlightStartOffset
+        val editEnd = maxOf(preview.highlightEndOffset, editStart)
+        val caretIsAtEdit = caretOffset in editStart..editEnd
+        val useOverlay = preview.overlaySegments.isNotEmpty() && !caretIsAtEdit
 
-        activeHighlighter = editor.markupModel.addRangeHighlighter(
-            preview.highlightStartOffset,
-            preview.highlightEndOffset,
-            HighlighterLayer.LAST,
-            attrs,
-            HighlighterTargetArea.EXACT_RANGE,
-        ).also { h ->
-            h.gutterIconRenderer = NesGutterIcon(preview)
-            h.errorStripeTooltip = preview.tooltipHtml
-            h.isThinErrorStripeMark = true
+        if (useOverlay) {
+            // ── Replace/update prediction — caret is elsewhere ───────────────
+            // Show the changed word in a green pill floating after the line end.
+            val line = document.getLineNumber(preview.highlightStartOffset.coerceIn(0, document.textLength))
+            val lineEndOffset = document.getLineEndOffset(line)
+            activeInlineInlay = editor.inlayModel.addAfterLineEndElement(
+                lineEndOffset,
+                true,
+                NesOverlayTextRenderer(preview.overlaySegments)
+            )
+            activeBlockInlay = null
+        } else {
+            // ── Caret is at the edit / pure insertion — user is typing ────────
+            // Show plain italic gray ghost text right after the caret, exactly
+            // like a normal autocomplete suggestion.
+            val display = GhostTextDisplayParts.from(preview.displayText)
+            activeInlineInlay = display.inlineText
+                .takeUnless { it.isEmpty() }
+                ?.let { editor.inlayModel.addInlineElement(preview.displayOffset, InlineGhostTextRenderer(it, highlighted = false)) }
+            activeBlockInlay = display.blockText
+                .takeUnless { it.isEmpty() }
+                ?.let {
+                    editor.inlayModel.addBlockElement(
+                        preview.displayOffset,
+                        true,
+                        false,
+                        0,
+                        BlockGhostTextRenderer(it, highlighted = false)
+                    )
+                }
         }
-
-        activeInlineInlay = display.inlineText
-            .takeUnless { it.isEmpty() }
-            ?.let { editor.inlayModel.addInlineElement(preview.displayOffset, InlineGhostTextRenderer(it)) }
-
-        activeBlockInlay = display.blockText
-            .takeUnless { it.isEmpty() }
-            ?.let { editor.inlayModel.addBlockElement(preview.displayOffset, true, false, 0, BlockGhostTextRenderer(it)) }
 
         activeEditor = editor
         activePreview = preview
         activeHint = hint
-        showPreviewPopup(editor, preview)
+
+        val caretLine = document.getLineNumber(editor.caretModel.offset)
+        val predictionLine = document.getLineNumber(preview.jumpOffset)
+        activeJumpHint = if (abs(predictionLine - caretLine) >= MIN_JUMP_HINT_LINE_DISTANCE) {
+            showTabJumpHintInlay(editor, preview.jumpOffset)
+        } else {
+            null
+        }
     }
 
     fun acceptOrJump(editor: Editor) {
@@ -112,6 +170,8 @@ object NesHintManager {
         if (caretOffset !in jumpStart..jumpEnd) {
             editor.caretModel.moveToOffset(jumpStart)
             editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
+            activeJumpHint?.dispose()
+            activeJumpHint = null
             return
         }
 
@@ -157,16 +217,93 @@ object NesHintManager {
         activeEditor = null
         activePreview = null
         activeHint = null
+        activeJumpHint?.dispose()
+        activeJumpHint = null
     }
 
     fun isShowing(editor: Editor? = activeEditor): Boolean =
         editor != null && editor == activeEditor && activeHint != null
+
+    /**
+     * Called on every document change while a hint is active.
+     *
+     * Handles two cases that IntelliJ smart-keys cause in HTML/code files:
+     *
+     * 1. **Prefix match** — the user typed the next character(s) of the
+     *    replacement.  Trim them from the front of the hint and re-show the
+     *    remainder so the ghost text "follows" the caret.
+     *
+     * 2. **Auto-inserted closing bracket** — IntelliJ inserted a closing
+     *    `}`, `]`, `)`, `"`, `'`, or `>` that already appears at the end of
+     *    the replacement (e.g. typed `r` in HTML → IDE wrapped it as
+     *    `<her></her>`).  Strip the duplicate suffix from the hint so the
+     *    ghost text stays correct.
+     *
+     * Returns `true` if the hint was kept alive (possibly updated), or
+     * `false` if the caller should dismiss + re-predict as normal.
+     */
+    fun consumeTyped(editor: Editor, inserted: String, removed: String): Boolean {
+        if (editor != activeEditor) return false
+        val hint = activeHint ?: return false
+
+        // Only handle pure insertions on the completion path (no selectionToRemove).
+        // Replace-predictions (overlay segments) are dismissed normally so the
+        // engine can re-predict after the user edits.
+        if (hint.selectionToRemove != null) return false
+        if (inserted.isEmpty()) return false
+
+        var replacement = hint.replacement
+
+        // ── Case 1: user typed the next chars of the replacement ─────────────
+        if (replacement.startsWith(inserted)) {
+            val remaining = replacement.removePrefix(inserted)
+            if (remaining.isBlank()) {
+                // Fully typed — dismiss silently, no re-predict needed.
+                dismiss(editor)
+                return true
+            }
+            val updatedHint = hint.copy(
+                replacement = remaining,
+                position = hint.position.copy(
+                    col = hint.position.col + inserted.length
+                ),
+            )
+            show(editor, updatedHint)
+            return true
+        }
+
+        // ── Case 2: IDE auto-inserted a closing bracket at the end ───────────
+        val closingBrackets = setOf('}', ']', ')', '"', '\'', '>')
+        if (inserted.length == 1 && inserted[0] in closingBrackets && replacement.endsWith(inserted)) {
+            val trimmed = replacement.dropLast(inserted.length)
+            if (trimmed.isEmpty()) {
+                dismiss(editor)
+                return true
+            }
+            val updatedHint = hint.copy(replacement = trimmed)
+            show(editor, updatedHint)
+            return true
+        }
+
+        return false
+    }
 
     private fun offsetFor(document: com.intellij.openapi.editor.Document, line: Int, col: Int): Int {
         val safeLine = line.coerceIn(0, document.lineCount - 1)
         val lineStart = document.getLineStartOffset(safeLine)
         val lineEnd = document.getLineEndOffset(safeLine)
         return lineStart + col.coerceAtMost(lineEnd - lineStart)
+    }
+
+    fun showTabJumpHintInlay(editor: Editor, offset: Int): Inlay<*>? {
+        val safeOffset = offset.coerceIn(0, editor.document.textLength)
+        val line = editor.document.getLineNumber(safeOffset)
+        val lineEndOffset = editor.document.getLineEndOffset(line)
+        return editor.inlayModel.addAfterLineEndElement(
+            lineEndOffset,
+            true,
+            TabJumpHintInlayRenderer()
+        )
     }
 
     private fun showPreviewPopup(editor: Editor, preview: NesDisplayPreview) {
@@ -227,6 +364,7 @@ data class NesDisplayPreview(
     val tooltipHtml: String,
     val popupTitle: String,
     val popupText: String,
+    val overlaySegments: List<NesOverlaySegment> = emptyList(),
 ) {
     fun popupAnchor(editor: Editor): Point {
         val point = editor.visualPositionToXY(editor.offsetToVisualPosition(jumpOffset))
@@ -259,7 +397,8 @@ data class NesDisplayPreview(
             val fallbackDisplayText = hint.replacement
             val fallbackHighlightStart = removeRange?.first ?: startOffset
             val fallbackHighlightEnd = removeRange?.second ?: startOffset
-            val useFallback = compactDiff.displayText.isEmpty() && compactHighlightStart == compactHighlightEnd && fallbackDisplayText.isNotEmpty()
+            val useFallback =
+                compactDiff.displayText.isEmpty() && compactHighlightStart == compactHighlightEnd && fallbackDisplayText.isNotEmpty()
 
             val displayText = if (useFallback) fallbackDisplayText else compactDiff.displayText
             val displayOffset = if (useFallback) startOffset else compactDisplayOffset
@@ -277,6 +416,8 @@ data class NesDisplayPreview(
                 else -> "New content"
             }
 
+            val overlaySegments = buildOverlaySegments(removedText, hint.replacement)
+
             return NesDisplayPreview(
                 displayOffset = displayOffset,
                 jumpOffset = compactDisplayOffset,
@@ -286,7 +427,33 @@ data class NesDisplayPreview(
                 tooltipHtml = buildTooltipHtml(previewText),
                 popupTitle = popupTitle,
                 popupText = previewText,
+                overlaySegments = overlaySegments,
             )
+        }
+
+        private fun buildOverlaySegments(before: String, after: String): List<NesOverlaySegment> {
+            if (after.isEmpty() || before.contains('\n') || after.contains('\n')) return emptyList()
+
+            val prefixLength = before.commonPrefixWith(after).length
+            val beforeRemainder = before.length - prefixLength
+            val afterRemainder = after.length - prefixLength
+            val maxSuffixLength = minOf(beforeRemainder, afterRemainder)
+
+            var suffixLength = 0
+            while (suffixLength < maxSuffixLength && before[before.length - 1 - suffixLength] == after[after.length - 1 - suffixLength]) {
+                suffixLength += 1
+            }
+
+            val prefix = after.substring(0, prefixLength)
+            val changed = after.substring(prefixLength, after.length - suffixLength)
+            val suffix = after.substring(after.length - suffixLength)
+
+            return buildList {
+                if (prefix.isNotEmpty()) add(NesOverlaySegment(prefix, highlighted = false))
+                if (changed.isNotEmpty()) add(NesOverlaySegment(changed, highlighted = true))
+                if (suffix.isNotEmpty()) add(NesOverlaySegment(suffix, highlighted = false))
+                if (isEmpty() && after.isNotEmpty()) add(NesOverlaySegment(after, highlighted = true))
+            }
         }
 
         private fun compactDiff(before: String, after: String): CompactDiff {
