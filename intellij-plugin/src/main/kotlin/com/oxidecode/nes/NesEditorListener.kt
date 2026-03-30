@@ -124,6 +124,13 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     private var pendingDelta: PendingEditDelta? = null
     private var debounceJob: Job? = null
 
+    /**
+     * Snapshot of the file content captured at the start of the current
+     * edit session (before the first tracked edit).  Used by the Sweep
+     * prompt style for the top-level context chunk.
+     */
+    private var originalFileContent: String? = null
+
     override fun documentChanged(event: DocumentEvent) {
         if (!settings.nesEnabled) return
 
@@ -156,6 +163,11 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         )
 
         synchronized(historyLock) {
+            // Capture file content before the first tracked edit for
+            // Sweep's original-content context chunk.
+            if (originalFileContent == null) {
+                originalFileContent = doc.text
+            }
             if (pendingDelta?.tryMerge(delta) != true) {
                 flushPendingDeltaLocked()
                 pendingDelta = delta
@@ -186,6 +198,9 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 flushPendingDeltaLocked()
                 Json.encodeToString(history.toList())
             }
+            val origContent = synchronized(historyLock) {
+                originalFileContent ?: ""
+            }
             val result = runCatching {
                 bridge.predictNextEdit(
                     baseUrl = settings.baseUrl,
@@ -199,6 +214,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     fileContent = content,
                     language = guessLanguage(filepath),
                     completionEndpoint = settings.completionEndpoint,
+                    originalFileContent = origContent,
                 )
             }.getOrNull()
 

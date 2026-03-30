@@ -15,7 +15,7 @@ class OxideCodeConfigurable : Configurable {
     private val completionModelField = JTextField(40)
     private val nesEnabledBox = JCheckBox("Enable Next Edit Suggestions")
     private val nesDebounceMsField = JSpinner(SpinnerNumberModel(300, 50, 5000, 50))
-    private val nesPromptStyleBox = JComboBox(arrayOf("generic", "zeta1", "zeta2"))
+    private val nesPromptStyleBox = JComboBox(arrayOf("generic", "zeta1", "zeta2", "sweep"))
     private val completionEndpointBox = JComboBox(arrayOf("completions", "chat_completions"))
 
     override fun getDisplayName() = "OxideCode"

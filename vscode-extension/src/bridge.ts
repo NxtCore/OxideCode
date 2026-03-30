@@ -48,7 +48,7 @@ export interface NesHint {
 }
 
 export interface NesConfig {
-  /** "generic" | "zeta1" | "zeta2" */
+  /** "generic" | "zeta1" | "zeta2" | "sweep" */
   promptStyle: string;
 }
 
@@ -78,7 +78,8 @@ export async function predictNextEdit(
   cursorLine: number,
   cursorCol: number,
   fileContent: string,
-  language: string
+  language: string,
+  originalFileContent?: string | null
 ): Promise<NesHint | null> {
   return getNative().predictNextEdit(
     providerConfig,
@@ -88,7 +89,8 @@ export async function predictNextEdit(
     cursorLine,
     cursorCol,
     fileContent,
-    language
+    language,
+    originalFileContent ?? null
   );
 }
 

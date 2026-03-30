@@ -44,6 +44,12 @@ pub enum CompletionEndpoint {
 ///   git-merge-style `<<<<<<< CURRENT` / `>>>>>>> UPDATED` markers for the
 ///   editable region. Best results with the `zed-industries/zeta-2` checkpoint
 ///   or any model that understands seed-coder SPM FIM.
+/// - `Sweep` — Sweep AI's next-edit format (sweep-next-edit-1.5b/7b). Uses
+///   Qwen 2.5 Coder special tokens (`<|file_sep|>`, `<|endoftext|>`) with
+///   `original/` / `current/` / `updated/` file-section blocks and a fixed
+///   sliding window around the cursor. Recent edits are formatted as
+///   `original:` / `updated:` diff pairs. Best with the `sweepai/sweep-next-
+///   edit-*` checkpoints served via `/v1/completions`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NesPromptStyle {
@@ -51,6 +57,7 @@ pub enum NesPromptStyle {
     Generic,
     Zeta1,
     Zeta2,
+    Sweep,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,10 +122,11 @@ pub struct NesConfig {
     pub context_tokens: usize,
     /// Which prompting style to use when building the NES request.
     /// Defaults to `Generic` (JSON-based). Set to `Zeta1` or `Zeta2` to use
-    /// the Zed / Zeta family of edit-prediction prompts.
+    /// the Zed / Zeta family of edit-prediction prompts, or `Sweep` for the
+    /// Sweep AI next-edit format.
     pub prompt_style: NesPromptStyle,
     /// Which HTTP endpoint to use for `Generic` style NES requests.
-    /// Has no effect for `Zeta1` / `Zeta2` styles, which always use
+    /// Has no effect for `Zeta1` / `Zeta2` / `Sweep` styles, which always use
     /// `/v1/completions` because they rely on FIM special tokens.
     pub completion_endpoint: CompletionEndpoint,
 }

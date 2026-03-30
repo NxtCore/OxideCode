@@ -31,6 +31,7 @@ fn parse_prompt_style(s: &str) -> NesPromptStyle {
     match s {
         "zeta1" => NesPromptStyle::Zeta1,
         "zeta2" => NesPromptStyle::Zeta2,
+        "sweep" => NesPromptStyle::Sweep,
         _ => NesPromptStyle::Generic,
     }
 }
@@ -140,7 +141,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
 
 // ─── NES ─────────────────────────────────────────────────────────────────────
 
-/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, nesPromptStyle, deltasJson, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint) -> String (JSON NesHint)`
+/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, nesPromptStyle, deltasJson, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint, originalFileContent) -> String (JSON NesHint)`
 #[no_mangle]
 pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     mut env: JNIEnv,
@@ -156,6 +157,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     file_content: JString,
     language: JString,
     completion_endpoint: JString,
+    original_file_content: JString,
 ) -> jstring {
     let base_url: String = env.get_string(&base_url).unwrap().into();
     let api_key: String = env.get_string(&api_key).unwrap().into();
@@ -166,6 +168,13 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     let file_content: String = env.get_string(&file_content).unwrap().into();
     let language: String = env.get_string(&language).unwrap().into();
     let completion_endpoint: String = env.get_string(&completion_endpoint).unwrap().into();
+    let original_file_content: String = env.get_string(&original_file_content).unwrap().into();
+
+    let original_file_content_opt: Option<&str> = if original_file_content.is_empty() {
+        None
+    } else {
+        Some(original_file_content.as_str())
+    };
 
     let api_key_opt = if api_key.is_empty() {
         None
@@ -216,6 +225,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         cursor_col as u32,
         &file_content,
         &language,
+        original_file_content_opt,
         cancel,
     ));
 

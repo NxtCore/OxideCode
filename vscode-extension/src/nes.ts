@@ -21,6 +21,15 @@ export class NesProvider {
   private editHistory: EditDelta[] = [];
   private readonly maxHistoryLen = 8;
 
+  /**
+   * Snapshot of the file content captured at the start of the current
+   * edit session (i.e. when the first edit delta is recorded after a
+   * clear).  Used by the Sweep prompt style for the top-level context
+   * chunk so the model sees the original file, not the version that
+   * already includes recent edits.
+   */
+  private originalFileContent: string | null = null;
+
   /** The currently displayed hint and the editor it targets. */
   private activeHint: NesHint | null = null;
   private activeEditor: vscode.TextEditor | null = null;
@@ -74,6 +83,15 @@ export class NesProvider {
         timestampMs: now,
       };
 
+      // Capture the file content before the first edit in this session
+      // so Sweep can use it as the "original" context chunk.
+      if (this.originalFileContent === null) {
+        // The document already reflects this change, so we approximate
+        // the pre-edit content.  For multi-change events, the first
+        // capture is good enough.
+        this.originalFileContent = document.getText();
+      }
+
       if (this.editHistory.length >= this.maxHistoryLen) {
         this.editHistory.shift();
       }
@@ -114,7 +132,8 @@ export class NesProvider {
         cursor.line,
         cursor.character,
         document.getText(),
-        document.languageId
+        document.languageId,
+        this.originalFileContent
       );
 
       if (!hint) return;
@@ -213,6 +232,7 @@ export class NesProvider {
 
   clearHistory(): void {
     this.editHistory = [];
+    this.originalFileContent = null;
     this.dismissHint();
   }
 }

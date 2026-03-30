@@ -72,7 +72,7 @@
 					"enumDescriptions": [
 						"Generic JSON format — the default OxideCode format. Works with any instruction-following model.",
 						"Zeta2 SPM FIM format — Zed's modern suffix-prefix-middle format. Best results with zed-industries/zeta-2 or Seed-Coder-based models.",
-						"Sweep FIM format — Sweep Shutodown model, best results with the 7B model, 1.5B are also good."
+						"Sweep next-edit format — Sweep AI's next-edit prediction format. Best results with sweepai/sweep-next-edit-7b (1.5b also supported)."
 					],
 					"default": "generic",
 					"description": "Prompt format used by the NES engine when querying the model."

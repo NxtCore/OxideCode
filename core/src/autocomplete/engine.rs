@@ -127,6 +127,8 @@ impl CompletionEngine {
             NesPromptStyle::Generic => text,
             NesPromptStyle::Zeta1 => sanitize_zeta1_completion(&text),
             NesPromptStyle::Zeta2 => sanitize_zeta2_completion(&text, suffix),
+            // Sweep uses generic FIM for autocomplete, so no special sanitization.
+            NesPromptStyle::Sweep => text,
         };
 
         if cleaned.trim().is_empty() {

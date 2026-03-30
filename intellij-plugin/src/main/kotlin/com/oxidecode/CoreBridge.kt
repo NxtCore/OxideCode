@@ -54,10 +54,11 @@ class CoreBridge {
     // ── NES ───────────────────────────────────────────────────────────────
 
     /**
-     * @param nesPromptStyle      NES prompt format: "generic" | "zeta1" | "zeta2".
+     * @param nesPromptStyle      NES prompt format: "generic" | "zeta1" | "zeta2" | "sweep".
      * @param deltasJson          JSON array of EditDelta objects.
      * @param completionEndpoint  Which HTTP endpoint to use for Generic NES style:
      *   "completions" (default) or "chat_completions".
+     * @param originalFileContent Pre-edit file snapshot for Sweep prompt (empty string if unused).
      * @return                    JSON-encoded NesHint, or empty string if no prediction.
      */
     external fun predictNextEdit(
@@ -72,6 +73,7 @@ class CoreBridge {
         fileContent: String,
         language: String,
         completionEndpoint: String,
+        originalFileContent: String,
     ): String
 
     companion object {

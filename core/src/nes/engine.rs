@@ -8,8 +8,9 @@ use tracing::{debug, info, warn};
 use super::delta::EditDelta;
 use super::hint::{HintPosition, NesHint, SelectionRange};
 use super::prompt::{
-    build_nes_prompt, build_zeta1_prompt, build_zeta2_prompt, parse_zeta1_response,
-    parse_zeta2_response, zeta1, zeta2, NesModelResponse, ZetaEditableRegion,
+    build_nes_prompt, build_sweep_prompt, build_zeta1_prompt, build_zeta2_prompt,
+    parse_sweep_response, parse_zeta1_response, parse_zeta2_response, sweep, zeta1, zeta2,
+    NesModelResponse, ZetaEditableRegion,
 };
 use crate::agent::Message;
 use crate::config::{CompletionEndpoint, NesConfig, NesPromptStyle};
@@ -288,6 +289,10 @@ const NES_ZETA2_MAX_TOKENS: u32 = 1024;
 /// Maximum tokens for a Generic NES response (compact JSON object).
 const NES_GENERIC_MAX_TOKENS: u32 = 256;
 
+/// Maximum tokens for a Sweep next-edit response.
+/// Sweep uses a ±5-line code block → at most ~10 lines × ~20 tokens/line.
+const NES_SWEEP_MAX_TOKENS: u32 = 200;
+
 /// The NES engine accumulates edit history and, on request, asks the
 /// provider to predict the next edit.
 ///
@@ -341,6 +346,10 @@ impl NesEngine {
     /// - The request is cancelled before the model responds.
     /// - The model returns unparseable output.
     /// - There are no recent edits to build context from.
+    ///
+    /// `original_file_content` is needed only for the `Sweep` prompt style —
+    /// it provides the pre-edit snapshot of the file used for the top-level
+    /// context chunk.  Pass `None` for other prompt styles.
     pub async fn predict(
         &self,
         cursor_filepath: &str,
@@ -348,6 +357,7 @@ impl NesEngine {
         cursor_col: u32,
         file_content: &str,
         language: &str,
+        original_file_content: Option<&str>,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
         let recent_edits: Vec<EditDelta> = {
@@ -402,6 +412,19 @@ impl NesEngine {
                     cursor_line,
                     cursor_col,
                     file_content,
+                    cancel,
+                )
+                .await
+            }
+            NesPromptStyle::Sweep => {
+                let orig = original_file_content.unwrap_or(file_content);
+                self.predict_sweep(
+                    &recent_edits,
+                    cursor_filepath,
+                    cursor_line,
+                    cursor_col,
+                    file_content,
+                    orig,
                     cancel,
                 )
                 .await
@@ -576,6 +599,63 @@ impl NesEngine {
         debug!(raw_len = raw.len(), raw = %raw, "NES raw response received (zeta2)");
 
         let new_content = parse_zeta2_response(&raw)?;
+        self.zeta_region_to_hint(region, new_content, cursor_filepath)
+    }
+
+    // ── Sweep prediction ─────────────────────────────────────────────────────
+
+    async fn predict_sweep(
+        &self,
+        recent_edits: &[EditDelta],
+        cursor_filepath: &str,
+        cursor_line: u32,
+        cursor_col: u32,
+        file_content: &str,
+        original_file_content: &str,
+        cancel: CancellationToken,
+    ) -> Option<NesHint> {
+        let (prompt, ctx) = build_sweep_prompt(
+            recent_edits,
+            cursor_filepath,
+            cursor_line,
+            cursor_col,
+            file_content,
+            original_file_content,
+        );
+
+        debug!(
+            filepath = cursor_filepath,
+            cursor_line,
+            cursor_col,
+            block_start_line = ctx.block_start_line,
+            cursor_line_start = ctx.cursor_line_start,
+            cursor_line_end = ctx.cursor_line_end,
+            prefill_len = ctx.prefill.len(),
+            "NES Sweep prompt assembled"
+        );
+        debug!("raw prompt" = %prompt);
+
+        // Sweep uses a Qwen 2.5 Coder base model — raw text completion,
+        // no chat template.
+        let stop_tokens: Vec<String> =
+            sweep::STOP_TOKENS.iter().map(|s| s.to_string()).collect();
+        let raw = self
+            .run_completion_raw(prompt, NES_SWEEP_MAX_TOKENS, stop_tokens, cancel)
+            .await?;
+        debug!(raw_len = raw.len(), raw = %raw, "NES raw response received (sweep)");
+
+        let new_content = parse_sweep_response(&raw, &ctx)?;
+
+        // Reuse the Zeta region→hint logic: construct a ZetaEditableRegion
+        // from the Sweep code block context.
+        let cursor_byte_offset_in_block = ctx.prefill.len();
+        let region = ZetaEditableRegion {
+            start_line: ctx.block_start_line,
+            end_line: ctx.block_start_line
+                + ctx.original_code_block.lines().count().saturating_sub(1) as u32,
+            original_content: ctx.original_code_block.clone(),
+            cursor_byte_offset: cursor_byte_offset_in_block,
+        };
         self.zeta_region_to_hint(region, new_content, cursor_filepath)
     }
 

@@ -5,7 +5,7 @@ pub mod engine;
 use serde::{Deserialize, Serialize};
 
 use crate::config::NesPromptStyle;
-use crate::nes::prompt::{zeta1, zeta2};
+use crate::nes::prompt::{sweep, zeta1, zeta2};
 
 /// Everything the provider needs to generate a completion.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -26,6 +26,9 @@ impl CompletionContext {
             NesPromptStyle::Generic => self.to_generic_fim_prompt(),
             NesPromptStyle::Zeta1 => self.to_zeta1_prompt(),
             NesPromptStyle::Zeta2 => self.to_zeta2_prompt(),
+            // Sweep is a next-edit model, not a FIM model — reuse generic
+            // FIM format for autocomplete requests.
+            NesPromptStyle::Sweep => self.to_generic_fim_prompt(),
         }
     }
 
@@ -41,6 +44,7 @@ impl CompletionContext {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            NesPromptStyle::Sweep => sweep::STOP_TOKENS.iter().map(|s| s.to_string()).collect(),
         }
     }
 

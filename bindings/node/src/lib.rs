@@ -45,6 +45,7 @@ fn parse_prompt_style(s: Option<&str>) -> NesPromptStyle {
     match s {
         Some("zeta1") => NesPromptStyle::Zeta1,
         Some("zeta2") => NesPromptStyle::Zeta2,
+        Some("sweep") => NesPromptStyle::Sweep,
         _ => NesPromptStyle::Generic,
     }
 }
@@ -118,7 +119,7 @@ pub async fn get_completion(
 
 #[napi(object)]
 pub struct JsNesConfig {
-    /// Which NES prompt style to use: "generic" | "zeta1" | "zeta2".
+    /// Which NES prompt style to use: "generic" | "zeta1" | "zeta2" | "sweep".
     /// Defaults to "generic" when absent or unrecognised.
     pub prompt_style: Option<String>,
 }
@@ -157,6 +158,9 @@ pub async fn predict_next_edit(
     cursor_col: u32,
     file_content: String,
     language: String,
+    // Pre-edit snapshot of the file, used by the Sweep prompt style for the
+    // top-level context chunk.  Pass `null`/`undefined` for other styles.
+    original_file_content: Option<String>,
 ) -> Result<Option<JsNesHint>> {
     let prompt_style = parse_prompt_style(nes_config.prompt_style.as_deref());
 
@@ -209,6 +213,7 @@ pub async fn predict_next_edit(
             cursor_col,
             &file_content,
             &language,
+            original_file_content.as_deref(),
             cancel,
         )
         .await;
