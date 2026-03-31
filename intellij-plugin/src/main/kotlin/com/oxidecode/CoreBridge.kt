@@ -26,7 +26,6 @@ class CoreBridge {
             LOG.warn("Failed to initialise native logging: ${e.message}", e)
         }
     }
-
     // ── Autocomplete ──────────────────────────────────────────────────────
 
     /**
