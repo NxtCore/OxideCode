@@ -2,11 +2,11 @@
 	"name": "oxidecode",
 	"displayName": "OxideCode",
 	"description": "AI autocomplete and next-edit suggestions powered by local and cloud models",
-	"version": "0.1.0",
+	"version": "0.1.2",
 	"publisher": "oxidecode",
 	"icon": "light.png",
 	"engines": {
-		"vscode": "^1.85.0"
+		"vscode": "^1.108.0"
 	},
 	"categories": [
 		"AI",
@@ -26,7 +26,7 @@
 	"activationEvents": [
 		"onStartupFinished"
 	],
-	"main": "./dist/extension.js",
+	"main": "./out/extension.js",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/NxtCore/OxideCode.git"
@@ -58,106 +58,202 @@
 	],
 	"qna": "https://github.com/NxtCore/OxideCode/discussions",
 	"contributes": {
+		"commands": [
+			{
+				"command": "sweep.triggerNextEdit",
+				"title": "OxideCode: Trigger Next Edit Suggestion"
+			},
+			{
+				"command": "sweep.toggleEnabled",
+				"title": "OxideCode: Toggle Enabled"
+			},
+			{
+				"command": "sweep.showMenu",
+				"title": "OxideCode: Show Menu"
+			},
+			{
+				"command": "sweep.acceptJumpEdit",
+				"title": "OxideCode: Accept Jump Edit"
+			},
+			{
+				"command": "sweep.acceptInlineEdit",
+				"title": "OxideCode: Accept Inline Edit"
+			},
+			{
+				"command": "sweep.dismissJumpEdit",
+				"title": "OxideCode: Dismiss Jump Edit"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "sweep.acceptJumpEdit",
+				"key": "tab",
+				"when": "editorTextFocus && sweep.hasJumpEdit && !editorHasSelection && !inlineSuggestionVisible && !suggestWidgetVisible"
+			},
+			{
+				"command": "sweep.acceptJumpEdit",
+				"key": "alt+tab",
+				"when": "editorTextFocus && sweep.hasJumpEdit && !editorHasSelection"
+			},
+			{
+				"command": "sweep.acceptJumpEdit",
+				"key": "alt+l",
+				"when": "isLinux && editorTextFocus && sweep.hasJumpEdit && !editorHasSelection"
+			},
+			{
+				"command": "sweep.dismissJumpEdit",
+				"key": "escape",
+				"when": "editorTextFocus && sweep.hasJumpEdit"
+			},
+			{
+				"command": "editor.action.inlineSuggest.commit",
+				"key": "alt+tab",
+				"when": "editorTextFocus && inlineSuggestionVisible && suggestWidgetVisible && !editorHasSelection && !sweep.hasJumpEdit && !inSnippetMode"
+			},
+			{
+				"command": "editor.action.inlineSuggest.commit",
+				"key": "alt+l",
+				"when": "isLinux && editorTextFocus && inlineSuggestionVisible && suggestWidgetVisible && !editorHasSelection && !sweep.hasJumpEdit && !inSnippetMode"
+			},
+			{
+				"command": "editor.action.inlineSuggest.hide",
+				"key": "escape",
+				"when": "editorTextFocus && inlineSuggestionVisible && !suggestWidgetVisible && !sweep.hasJumpEdit"
+			}
+		],
 		"configuration": {
 			"title": "OxideCode",
 			"properties": {
-				"oxidecode.provider.baseUrl": {
-					"type": "string",
-					"default": "http://127.0.0.1:1234\n\n",
-					"description": "Base URL for OpenAI-compatible API (Ollama, LM Studio, OpenAI, etc.)"
+				"oxidecode.enabled": {
+					"type": "boolean",
+					"default": true,
+					"scope": "window",
+					"description": "Enable or disable OxideCode suggestions"
 				},
-				"oxidecode.provider.apiKey": {
+				"oxidecode.backend": {
 					"type": "string",
-					"default": "",
-					"description": "API key (leave empty for Ollama/local models)"
+					"enum": [
+						"native",
+						"http"
+					],
+					"enumDescriptions": [
+						"Use native Rust core via NAPI bindings (faster, requires native module)",
+						"Use HTTP local server (slower, requires Python/uvx)"
+					],
+					"default": "native",
+					"description": "Backend mode for inference requests"
 				},
-				"oxidecode.provider.model": {
+				"oxidecode.promptStyle": {
 					"type": "string",
-					"default": "qwen2.5-coder:7b",
-					"description": "Model used for chat and NES"
+					"enum": [
+						"generic",
+						"sweep",
+						"zeta1",
+						"zeta2"
+					],
+					"enumDescriptions": [
+						"Generic JSON-based prompt format",
+						"Sweep AI next-edit format (recommended for sweep-next-edit models)",
+						"Zed's legacy instruction-following format (for zeta v1 models)",
+						"Zed's modern SPM FIM format (for zeta-2 / seed-coder models)"
+					],
+					"default": "sweep",
+					"description": "Prompt style used for NES (Next-Edit Suggestion) requests"
 				},
-				"oxidecode.provider.completionModel": {
-					"type": "string",
-					"default": "",
-					"description": "Faster model for inline completions (falls back to main model if empty)"
-				},
-				"oxidecode.provider.completionEndpoint": {
+				"oxidecode.completionEndpoint": {
 					"type": "string",
 					"enum": [
 						"completions",
 						"chat_completions"
 					],
 					"enumDescriptions": [
-						"Use /v1/completions (default). Sends the raw FIM prompt without chat-template framing, which avoids tokenizer corruption for most local models.",
-						"Use /v1/chat/completions. Applies the model's chat template before inference. Use only for hosted models that do not expose the raw completions endpoint."
+						"Use /v1/completions (raw text, avoids chat-template framing)",
+						"Use /v1/chat/completions (chat format, for instruction-tuned models)"
 					],
 					"default": "completions",
-					"description": "HTTP endpoint used for inference requests."
+					"description": "HTTP endpoint type for inference requests"
 				},
-				"oxidecode.nes.enabled": {
-					"type": "boolean",
-					"default": true,
-					"description": "Enable Next Edit Suggestions"
-				},
-				"oxidecode.nes.debounceMs": {
-					"type": "number",
-					"default": 300,
-					"description": "Milliseconds to wait after an edit before requesting an NES prediction"
-				},
-				"oxidecode.nes.promptStyle": {
+				"oxidecode.provider.baseUrl": {
 					"type": "string",
-					"enum": [
-						"generic",
-						"zeta2",
-						"sweep"
+					"default": "http://localhost:11434/v1",
+					"description": "Base URL for the OpenAI-compatible inference server (e.g., Ollama, vLLM)"
+				},
+				"oxidecode.provider.apiKey": {
+					"type": "string",
+					"default": "",
+					"description": "API key for the inference server (optional for local servers)"
+				},
+				"oxidecode.provider.model": {
+					"type": "string",
+					"default": "qwen2.5-coder:7b",
+					"description": "Model name for NES and chat requests"
+				},
+				"oxidecode.provider.completionModel": {
+					"type": "string",
+					"default": "",
+					"description": "Separate model for FIM completions (optional, uses main model if empty)"
+				},
+				"oxidecode.maxContextFiles": {
+					"type": "number",
+					"default": 5,
+					"description": "Maximum number of recently viewed files to include as context"
+				},
+				"oxidecode.autocompleteExclusionPatterns": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						"**/.env*",
+						"**/*.pem",
+						"**/*.key",
+						"**/*.cert",
+						"**/*.crt",
+						"**/.dev.vars",
+						"**/secrets.yml"
 					],
-					"enumDescriptions": [
-						"Generic JSON format — the default OxideCode format. Works with any instruction-following model.",
-						"Zeta2 SPM FIM format — Zed's modern suffix-prefix-middle format. Best results with zed-industries/zeta-2 or Seed-Coder-based models.",
-						"Sweep next-edit format — Sweep AI's next-edit prediction format. Best results with sweepai/sweep-next-edit-7b (1.5b also supported)."
-					],
-					"default": "generic",
-					"description": "Prompt format used by the NES engine when querying the model."
+					"description": "File name suffixes or globs to exclude from autocomplete"
+				},
+				"oxidecode.autocompleteSnoozeUntil": {
+					"type": "number",
+					"default": 0,
+					"description": "Unix timestamp (ms) until which autocomplete is snoozed (0 disables snooze)"
+				},
+				"oxidecode.localPort": {
+					"type": "number",
+					"default": 8081,
+					"description": "Port for the local HTTP server (only used when backend is 'http')"
 				}
 			}
-		},
-		"commands": [
-			{
-				"command": "oxidecode.acceptNes",
-				"title": "OxideCode: Accept Next Edit Suggestion"
-			},
-			{
-				"command": "oxidecode.dismissNes",
-				"title": "OxideCode: Dismiss Next Edit Suggestion"
-			},
-			{
-				"command": "oxidecode.clearNesHistory",
-				"title": "OxideCode: Clear NES Edit History"
-			}
-		],
-		"keybindings": [
-			{
-				"command": "oxidecode.acceptNes",
-				"key": "tab",
-				"when": "oxidecode.nesVisible && !inlineSuggestionVisible"
-			},
-			{
-				"command": "oxidecode.dismissNes",
-				"key": "escape",
-				"when": "oxidecode.nesVisible"
-			}
-		]
+		}
 	},
 	"scripts": {
-		"build": "node scripts/build-native.js && esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:./oxidecode.node --minify",
-		"watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:./oxidecode.node --watch",
-		"package": "vsce package --no-dependencies"
+		"build": "bun build src/extension/activate.ts --outfile=out/extension.js --external=vscode --format=cjs --target=node",
+		"build:native": "cd .. && cargo build --release -p oxidecode-node",
+		"build:native:copy": "bun run build:native && node -e \"const fs=require('fs');const p=process.platform;const a=process.arch;fs.copyFileSync('../target/release/oxidecode_node'+(p==='win32'?'.dll':p==='darwin'?'.dylib':'.so'),'oxidecode.'+p+'-'+a+'.node')\"",
+		"build:all": "bun run build:native:copy && bun run build",
+		"typecheck": "bun tsgo --noEmit",
+		"lint": "bun biome check .",
+		"fix": "bun biome check . --write",
+		"package": "bunx vsce package --no-dependencies",
+		"package:all": "bun run build:all && bun run package"
+	},
+	"files": [
+		"out/**/*",
+		"oxidecode.*.node",
+		"light.png"
+	],
+	"dependencies": {
+		"@shikijs/core": "^3.21.0",
+		"@shikijs/engine-javascript": "^3.21.0",
+		"@shikijs/langs": "^3.21.0",
+		"@shikijs/themes": "^3.21.0",
+		"zod": "4.3.6"
 	},
 	"devDependencies": {
-		"@types/node": "^20.0.0",
-		"@types/vscode": "^1.85.0",
-		"esbuild": "^0.20.0",
-		"typescript": "^5.3.0",
-		"@vscode/vsce": "^2.24.0"
+		"@biomejs/biome": "2.3.13",
+		"@types/bun": "1.3.7",
+		"@types/vscode": "1.108.1",
+		"@typescript/native-preview": "7.0.0-dev.20260127.1"
 	}
 }

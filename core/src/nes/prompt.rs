@@ -679,7 +679,7 @@ pub fn parse_zeta1_response(raw: &str) -> Option<String> {
         .unwrap_or(content.len());
 
     if content_start > content_end {
-        return Some(String::new());
+        return None;
     }
 
     let extracted = content[content_start..content_end].to_string();
@@ -944,7 +944,7 @@ pub mod sweep {
     /// Qwen end-of-text token.
     pub const ENDOFTEXT: &str = "<|endoftext|>";
     /// Tokens that signal the model has finished generating.
-    pub const STOP_TOKENS: &[&str] = &["<|endoftext|>", "<|file_sep|>"];
+    pub const STOP_TOKENS: &[&str] = &["<|endoftext|>", "<|file_sep|>", "<|fim_prefix>", "<|fim_suffix|>", "<|fim_middle|>"];
     /// Number of lines to include above the cursor in the code block.
     pub const BLOCK_LINES_BEFORE: usize = 5;
     /// Number of lines to include below the cursor in the code block.

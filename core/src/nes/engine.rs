@@ -45,6 +45,26 @@ fn is_trivial_hint(hint: &NesHint) -> bool {
     }
 }
 
+/// Detects hints that look like erroneous mass deletions.
+///
+/// When the network fails mid-stream or the model returns garbage, the diff
+/// logic may produce a hint that deletes multiple lines with an empty or tiny
+/// replacement — this is almost never the user's intent and is likely a
+/// parsing/network failure artifact.
+fn is_suspicious_deletion(hint: &NesHint) -> bool {
+    let replacement_is_empty = hint.replacement.trim().is_empty();
+    if let Some(range) = &hint.selection_to_remove {
+        // A deletion spanning more than 1 line with no replacement is suspicious
+        let spans_multiple_lines = range.end_line > range.start_line;
+        // A deletion of >30 chars on a single line with no replacement is suspicious
+        let large_single_line_deletion =
+            range.start_line == range.end_line && range.end_col.saturating_sub(range.start_col) > 30;
+        replacement_is_empty && (spans_multiple_lines || large_single_line_deletion)
+    } else {
+        false
+    }
+}
+
 fn common_prefix_len(a: &str, b: &str) -> usize {
     a.chars()
         .zip(b.chars())
@@ -662,10 +682,12 @@ impl NesEngine {
     // ── Shared streaming helpers ───────────────────────────────────────────
 
     /// Stream a chat request (`/v1/chat/completions`) and collect the full
-    /// response text.  Returns `None` on cancellation or stream error.
+    /// response text.  Returns `None` on cancellation, stream error, or
+    /// empty response (e.g. network failure).
     async fn run_chat(&self, messages: Vec<Message>, cancel: CancellationToken) -> Option<String> {
         let mut stream = self.provider.chat_dyn(messages, cancel.clone());
         let mut raw = String::new();
+        let mut had_error = false;
 
         loop {
             tokio::select! {
@@ -674,6 +696,7 @@ impl NesEngine {
                         Some(Ok(token)) => raw.push_str(&token),
                         Some(Err(e)) => {
                             warn!("NES chat stream error: {e}");
+                            had_error = true;
                             break;
                         }
                         None => break,
@@ -686,11 +709,21 @@ impl NesEngine {
             }
         }
 
+        if had_error || raw.is_empty() {
+            if had_error {
+                warn!("NES chat: discarding response due to stream error (received {} bytes)", raw.len());
+            } else {
+                debug!("NES chat: model returned empty response");
+            }
+            return None;
+        }
+
         Some(raw)
     }
 
     /// Stream a raw text completion request (`/v1/completions`) and collect
-    /// the full response text.  Returns `None` on cancellation or stream error.
+    /// the full response text.  Returns `None` on cancellation, stream error,
+    /// or empty response (e.g. network failure).
     ///
     /// Use this for base models (Zeta1, Zeta2) and for Generic NES when
     /// `completion_endpoint` is `Completions`.
@@ -705,6 +738,7 @@ impl NesEngine {
             self.provider
                 .complete_dyn(prompt, max_tokens, stop_tokens, cancel.clone());
         let mut raw = String::new();
+        let mut had_error = false;
 
         loop {
             tokio::select! {
@@ -713,6 +747,7 @@ impl NesEngine {
                         Some(Ok(token)) => raw.push_str(&token),
                         Some(Err(e)) => {
                             warn!("NES raw completion stream error: {e}");
+                            had_error = true;
                             break;
                         }
                         None => break,
@@ -723,6 +758,15 @@ impl NesEngine {
                     return None;
                 }
             }
+        }
+
+        if had_error || raw.is_empty() {
+            if had_error {
+                warn!("NES raw completion: discarding response due to stream error (received {} bytes)", raw.len());
+            } else {
+                debug!("NES raw completion: model returned empty response");
+            }
+            return None;
         }
 
         Some(raw)
@@ -808,6 +852,11 @@ impl NesEngine {
 
         if is_trivial_hint(&hint) {
             debug!("Dropping trivial Zeta hint");
+            return None;
+        }
+
+        if is_suspicious_deletion(&hint) {
+            warn!("Dropping suspicious mass-deletion hint (likely network/parse error)");
             return None;
         }
 
@@ -961,6 +1010,11 @@ impl NesEngine {
 
         if is_trivial_hint(&hint) {
             debug!("Dropping trivial Sweep hint");
+            return None;
+        }
+
+        if is_suspicious_deletion(&hint) {
+            warn!("Dropping suspicious mass-deletion hint (likely network/parse error)");
             return None;
         }
 
