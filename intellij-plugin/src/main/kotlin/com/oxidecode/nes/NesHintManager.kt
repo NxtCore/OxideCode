@@ -448,7 +448,10 @@ object NesHintManager {
         }
 
         // ── 6. "TAB to jump here" inlay at prediction line ───────────────────
-        activeJumpHint = showTabJumpHintInlay(editor, preview.jumpOffset)
+        // Only show when cursor is NOT already on the affected line (matches VS Code behavior).
+        if (!isOnAffectedLine) {
+            activeJumpHint = showTabJumpHintInlay(editor, preview.jumpOffset)
+        }
     }
 
     // ── Accept / dismiss ──────────────────────────────────────────────────────
@@ -492,8 +495,17 @@ object NesHintManager {
                 val newCaretOffset = if (sr != null) {
                     val removeStart = offsetFor(doc, sr.startLine, sr.startCol)
                     val removeEnd = offsetFor(doc, sr.endLine, sr.endCol)
+                    val removedText = doc.getText(TextRange(removeStart, removeEnd))
+                    
+                    // For re-anchored insertions, the replacement includes bridged
+                    // characters that already exist in the document. Find the actual
+                    // NEW content by comparing old and new, then position cursor at
+                    // the end of the NEW content, not at the end of the full replacement.
+                    val commonSuffix = removedText.commonSuffixWith(hint.replacement)
+                    val actualNewLength = hint.replacement.length - commonSuffix.length
+                    
                     doc.replaceString(removeStart, removeEnd, hint.replacement)
-                    removeStart + hint.replacement.length
+                    removeStart + actualNewLength
                 } else {
                     doc.insertString(insertOffset, hint.replacement)
                     insertOffset + hint.replacement.length
@@ -742,7 +754,7 @@ data class NesDisplayPreview(
 
             val compactDiff = compactDiff(removedText, hint.replacement)
             val compactDisplayOffset = (removeRange?.first ?: startOffset) + compactDiff.commonPrefixLength
-            val compactHighlightStart = compactDisplayOffset
+            val compactHighlightStart = removeRange?.first ?: startOffset
             val compactHighlightEnd = (removeRange?.second ?: startOffset) - compactDiff.commonSuffixLength
 
             val fallbackDisplayText = hint.replacement
@@ -757,6 +769,10 @@ data class NesDisplayPreview(
             val displayOffset = if (useFallback) startOffset else compactDisplayOffset
             val highlightStartOffset = if (useFallback) fallbackHighlightStart else compactHighlightStart
             val highlightEndOffset = if (useFallback) fallbackHighlightEnd else compactHighlightEnd
+            
+            // Jump to the start of the visible change (first highlighted character),
+            // not the insertion point.
+            val jumpOffset = highlightStartOffset
 
             val previewText = when {
                 hint.replacement.isNotEmpty() -> hint.replacement
@@ -773,7 +789,7 @@ data class NesDisplayPreview(
 
             return NesDisplayPreview(
                 displayOffset = displayOffset,
-                jumpOffset = compactDisplayOffset,
+                jumpOffset = jumpOffset,
                 highlightStartOffset = highlightStartOffset,
                 highlightEndOffset = highlightEndOffset,
                 displayText = displayText,

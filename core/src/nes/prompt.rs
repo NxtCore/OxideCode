@@ -954,7 +954,7 @@ pub mod sweep {
     /// Overlap between adjacent chunks (0 = no overlap).
     pub const CHUNK_OVERLAP: usize = 0;
     /// Maximum number of recent change hunks to include in the prompt.
-    pub const MAX_RECENT_CHANGES: usize = 6;
+    pub const MAX_RECENT_CHANGES: usize = 10;
 }
 
 /// Metadata returned alongside the prompt string, needed later to convert the
