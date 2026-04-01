@@ -676,7 +676,7 @@ impl NesEngine {
             original_content: ctx.original_code_block.clone(),
             cursor_byte_offset: cursor_byte_offset_in_block,
         };
-        self.sweep_region_to_hint(region, new_content, cursor_filepath, cursor_col)
+        self.sweep_region_to_hint(region, new_content, cursor_filepath)
     }
 
     // ── Shared streaming helpers ───────────────────────────────────────────
@@ -865,30 +865,11 @@ impl NesEngine {
         Some(hint)
     }
 
-    /// Variant of [`zeta_region_to_hint`] used for Sweep predictions.
-    ///
-    /// The Sweep diff-trimming step can produce **pure-insertion** hints
-    /// (i.e. `selection_to_remove = None`) whose `position.col` sits *before*
-    /// the actual caret column.  In IntelliJ the ghost-text is only shown when
-    /// `preview.displayOffset == caretOffset`, so a hint that is even one
-    /// character to the left of the caret is silently dropped.
-    ///
-    /// This function detects that situation and re-anchors the hint to the
-    /// caret: the original characters between the (trimmed) insertion point and
-    /// the caret are prepended to the replacement so that the hint now has a
-    /// non-empty `selection_to_remove` whose start == caret.
-    ///
-    /// Example: old="webse", new="website", cursor at col 53 (after the 'e').
-    ///   • Standard logic: insert "it" at col 52 (before the shared 'e') → pure
-    ///     insertion, displayOffset = 52 ≠ 53 → ghost text not shown.
-    ///   • This function: replace "e" (col 52–53) with "ite" → displayOffset =
-    ///     52, removeRange present → ghost text shown correctly.
     fn sweep_region_to_hint(
         &self,
         region: ZetaEditableRegion,
         new_content: String,
         filepath: &str,
-        cursor_col: u32,
     ) -> Option<NesHint> {
         let old_content = region.original_content;
 
@@ -923,70 +904,14 @@ impl NesEngine {
             .saturating_sub(suffix_len)
             .max(new_diff_start);
 
-        // Compute the cursor's byte offset *within the code block* so we can
-        // detect when the diff start falls behind the caret.
-        //
-        // `region.cursor_byte_offset` was set to `ctx.prefill.len()` (= byte
-        // offset of the start of the cursor line within the block).  Adding
-        // `cursor_col` in bytes gives us the exact caret position.
-        let cursor_col_bytes: usize = {
-            // The cursor line begins at `region.cursor_byte_offset` in the
-            // block. Walk `cursor_col` *characters* forward to get the byte
-            // offset, handling multi-byte chars safely.
-            let line_start = region.cursor_byte_offset.min(old_content.len());
-            let line_text = &old_content[line_start..];
-            let mut byte_off = 0usize;
-            let mut chars_left = cursor_col as usize;
-            for ch in line_text.chars() {
-                if chars_left == 0 {
-                    break;
-                }
-                byte_off += ch.len_utf8();
-                chars_left -= 1;
-            }
-            byte_off
-        };
-        let caret_byte_in_block = region.cursor_byte_offset.saturating_add(cursor_col_bytes).min(old_content.len());
-
-        // Re-anchor a pure-insertion hint that lands before the caret.
-        //
-        // When `old_diff_start == old_diff_end` (nothing removed) and the
-        // insertion point is strictly before the caret, shift the removal
-        // range forward to the caret and absorb the bridged original chars into
-        // the replacement.  This ensures `displayOffset == caretOffset` in the
-        // IntelliJ NesHintManager.
-        let (final_old_diff_start, final_old_diff_end, final_replacement) =
-            if old_diff_start == old_diff_end && old_diff_start < caret_byte_in_block {
-                // Characters in old_content between the trimmed insertion point
-                // and the caret must appear in the replacement so the meaning
-                // of the edit is preserved.
-                let bridged = &old_content[old_diff_start..caret_byte_in_block];
-                let base_replacement = &new_content[new_diff_start..new_diff_end];
-                let new_replacement = format!("{}{}", base_replacement, bridged);
-                debug!(
-                    old_diff_start,
-                    caret_byte_in_block,
-                    bridged,
-                    new_replacement = %new_replacement,
-                    "Sweep: re-anchoring pure-insertion hint to caret"
-                );
-                (old_diff_start, caret_byte_in_block, new_replacement)
-            } else {
-                (
-                    old_diff_start,
-                    old_diff_end,
-                    new_content[new_diff_start..new_diff_end].to_string(),
-                )
-            };
-
-        let replacement = final_replacement;
-        let (start_rel_line, start_rel_col) = offset_to_line_col(&old_content, final_old_diff_start);
-        let (end_rel_line, end_rel_col) = offset_to_line_col(&old_content, final_old_diff_end);
+        let replacement = new_content[new_diff_start..new_diff_end].to_string();
+        let (start_rel_line, start_rel_col) = offset_to_line_col(&old_content, old_diff_start);
+        let (end_rel_line, end_rel_col) = offset_to_line_col(&old_content, old_diff_end);
 
         let abs_start_line = region.start_line + start_rel_line;
         let abs_end_line = region.start_line + end_rel_line;
 
-        let selection_to_remove = if final_old_diff_start < final_old_diff_end {
+        let selection_to_remove = if old_diff_start < old_diff_end {
             Some(SelectionRange {
                 start_line: abs_start_line,
                 start_col: start_rel_col,

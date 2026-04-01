@@ -944,7 +944,13 @@ pub mod sweep {
     /// Qwen end-of-text token.
     pub const ENDOFTEXT: &str = "<|endoftext|>";
     /// Tokens that signal the model has finished generating.
-    pub const STOP_TOKENS: &[&str] = &["<|endoftext|>", "<|file_sep|>", "<|fim_prefix>", "<|fim_suffix|>", "<|fim_middle|>"];
+    pub const STOP_TOKENS: &[&str] = &[
+        "<|endoftext|>",
+        "<|file_sep|>",
+        "<|fim_prefix>",
+        "<|fim_suffix|>",
+        "<|fim_middle|>",
+    ];
     /// Number of lines to include above the cursor in the code block.
     pub const BLOCK_LINES_BEFORE: usize = 5;
     /// Number of lines to include below the cursor in the code block.
@@ -1060,6 +1066,7 @@ fn sweep_get_nearest_chunk(file_content: &str, cursor_line: u32) -> String {
 fn sweep_format_changes_and_prev_section(
     recent_edits: &[EditDelta],
     current_section: &str,
+    cursor_filepath: &str,
 ) -> (String, String) {
     // Start with the current section, stripped of the cursor marker.
     let mut prev_section = current_section.replace(sweep::CURSOR_MARKER, "");
@@ -1076,7 +1083,11 @@ fn sweep_format_changes_and_prev_section(
 
     // Walk edits in reverse to un-apply changes and recover the original
     // section state (matching Sweep's `formatRecentChangesAndPrevSection`).
-    for delta in edits.iter().rev() {
+    for delta in edits
+        .iter()
+        .rev()
+        .filter(|delta| delta.filepath == cursor_filepath)
+    {
         if !delta.inserted.is_empty() && prev_section.contains(delta.inserted.as_str()) {
             // The "new" text is present in the section — replace first
             // occurrence with the "old" text to un-apply this edit.
@@ -1204,7 +1215,7 @@ pub fn build_sweep_prompt(
 
     // 4. Format recent changes and compute prev_section.
     let (formatted_changes, prev_section) =
-        sweep_format_changes_and_prev_section(recent_edits, &current_section);
+        sweep_format_changes_and_prev_section(recent_edits, &current_section, cursor_filepath);
 
     // 5. Compute prefill — text before cursor up to (and including) the last
     //    newline.  This is prepended to the model output to form the full

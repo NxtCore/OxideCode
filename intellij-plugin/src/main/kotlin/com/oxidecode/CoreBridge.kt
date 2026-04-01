@@ -64,6 +64,7 @@ class CoreBridge {
         baseUrl: String,
         apiKey: String,
         model: String,
+        completionModel: String,
         nesPromptStyle: String,
         deltasJson: String,
         cursorFilepath: String,

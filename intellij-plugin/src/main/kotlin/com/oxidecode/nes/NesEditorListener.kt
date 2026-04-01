@@ -1,34 +1,43 @@
 package com.oxidecode.nes
 
+import com.intellij.codeInsight.template.TemplateManager
 import com.intellij.openapi.components.service
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.CaretEvent
 import com.intellij.openapi.editor.event.CaretListener
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.editor.event.SelectionEvent
+import com.intellij.openapi.editor.event.SelectionListener
 import com.oxidecode.CoreBridge
+import com.oxidecode.absoluteUnixPath
+import com.oxidecode.detectLanguageId
 import com.oxidecode.settings.OxideCodeSettings
-import kotlinx.coroutines.*
-import kotlinx.serialization.encodeToString
+import java.awt.KeyboardFocusManager
+import java.util.WeakHashMap
+import javax.swing.SwingUtilities
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
-/**
- * Attaches document listeners to every editor as it opens.
- * Each keystroke triggers the NES debounce pipeline.
- */
 class NesEditorListener : EditorFactoryListener {
 
-    private val listeners = java.util.WeakHashMap<Editor, DocumentListener>()
-    private val caretListeners = java.util.WeakHashMap<Editor, CaretListener>()
+    private val listeners = WeakHashMap<Editor, DocumentListener>()
+    private val caretListeners = WeakHashMap<Editor, CaretListener>()
+    private val selectionListeners = WeakHashMap<Editor, SelectionListener>()
 
     override fun editorCreated(event: EditorFactoryEvent) {
         val editor = event.editor
+        val tracker = service<NesSessionTracker>()
+        absoluteUnixPath(editor.document)?.let { tracker.ensureOriginalContent(it, editor.document.text) }
 
         val docListener = NesDocumentListener(editor)
         editor.document.addDocumentListener(docListener)
@@ -42,6 +51,23 @@ class NesEditorListener : EditorFactoryListener {
         }
         editor.caretModel.addCaretListener(caretListener)
         caretListeners[editor] = caretListener
+
+        val selectionListener = object : SelectionListener {
+            override fun selectionChanged(e: SelectionEvent) {
+                val filepath = absoluteUnixPath(editor.document) ?: return
+                val selectionModel = editor.selectionModel
+                if (!selectionModel.hasSelection()) return
+
+                val startLine = editor.document.getLineNumber(selectionModel.selectionStart)
+                val endLine = editor.document.getLineNumber(selectionModel.selectionEnd)
+                val selectedText = selectionModel.selectedText
+                if (startLine != endLine || selectedText?.contains('\n') == true) {
+                    service<NesSessionTracker>().recordMultiLineSelection(filepath)
+                }
+            }
+        }
+        editor.selectionModel.addSelectionListener(selectionListener)
+        selectionListeners[editor] = selectionListener
     }
 
     override fun editorReleased(event: EditorFactoryEvent) {
@@ -52,80 +78,9 @@ class NesEditorListener : EditorFactoryListener {
         caretListeners.remove(editor)?.let { listener ->
             editor.caretModel.removeCaretListener(listener)
         }
-    }
-}
-
-private const val MAX_HISTORY_LEN = 8
-private const val EDIT_COALESCE_WINDOW_MS = 1_000L
-
-private data class PendingEditDelta(
-    val filepath: String,
-    var startLine: Int,
-    var startCol: Int,
-    var startOffset: Int,
-    var removed: String,
-    var inserted: String,
-    var fileContent: String,
-    var timestampMs: Long,
-) {
-    fun toEditDelta(): EditDelta = EditDelta(
-        filepath = filepath,
-        startLine = startLine,
-        startCol = startCol,
-        removed = removed,
-        inserted = inserted,
-        fileContent = fileContent,
-        timestampMs = timestampMs,
-    )
-
-    fun tryMerge(next: PendingEditDelta): Boolean {
-        if (filepath != next.filepath) return false
-        if (next.timestampMs - timestampMs > EDIT_COALESCE_WINDOW_MS) return false
-
-        val merged = when {
-            removed.isEmpty() && next.removed.isEmpty() -> mergeInsertions(next)
-            inserted.isEmpty() && next.inserted.isEmpty() -> mergeDeletions(next)
-            next.removed.isEmpty() -> mergeTrailingInsertion(next)
-            else -> false
+        selectionListeners.remove(editor)?.let { listener ->
+            editor.selectionModel.removeSelectionListener(listener)
         }
-
-        if (merged) {
-            fileContent = next.fileContent
-            timestampMs = next.timestampMs
-        }
-
-        return merged
-    }
-
-    private fun mergeInsertions(next: PendingEditDelta): Boolean {
-        val expectedOffset = startOffset + inserted.length
-        if (next.startOffset != expectedOffset) return false
-        inserted += next.inserted
-        return true
-    }
-
-    private fun mergeDeletions(next: PendingEditDelta): Boolean {
-        return when {
-            next.startOffset == startOffset -> {
-                removed += next.removed
-                true
-            }
-            next.startOffset + next.removed.length == startOffset -> {
-                removed = next.removed + removed
-                startOffset = next.startOffset
-                startLine = next.startLine
-                startCol = next.startCol
-                true
-            }
-            else -> false
-        }
-    }
-
-    private fun mergeTrailingInsertion(next: PendingEditDelta): Boolean {
-        val expectedOffset = startOffset + inserted.length
-        if (next.startOffset != expectedOffset) return false
-        inserted += next.inserted
-        return true
     }
 }
 
@@ -134,103 +89,69 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val settings get() = OxideCodeSettings.instance
     private val bridge get() = service<CoreBridge>()
-    private val historyLock = Any()
-
-    private val history = ArrayDeque<EditDelta>(MAX_HISTORY_LEN)
-    private var pendingDelta: PendingEditDelta? = null
+    private val tracker get() = service<NesSessionTracker>()
     private var debounceJob: Job? = null
-
-    /**
-     * Snapshot of the file content captured at the start of the current
-     * edit session (before the first tracked edit).  Used by the Sweep
-     * prompt style for the top-level context chunk.
-     */
-    private var originalFileContent: String? = null
 
     override fun documentChanged(event: DocumentEvent) {
         if (!settings.nesEnabled) return
 
         val removed = if (event.oldLength > 0) event.oldFragment.toString() else ""
         val inserted = event.newFragment.toString()
-
         if (removed.isEmpty() && inserted.isEmpty()) return
 
-        val doc = event.document
+        val document = event.document
+        val filepath = absoluteUnixPath(document) ?: return
         val offset = event.offset
         val startPos = editor.offsetToLogicalPosition(offset)
+        val now = System.currentTimeMillis()
+        val currentContent = document.text
+        val previousContent = buildPreviousContent(currentContent, event)
 
-        val filepath = FileDocumentManager.getInstance()
-            .getFile(doc)
-            ?.let { vf ->
-                editor.project?.let { project ->
-                    VfsUtilCore.getRelativePath(vf, project.baseDir ?: return@let vf.path)
-                } ?: vf.path
-            } ?: return
-
-        val delta = PendingEditDelta(
+        tracker.recordChange(
             filepath = filepath,
+            previousContent = previousContent,
             startLine = startPos.line,
             startCol = startPos.column,
             startOffset = offset,
             removed = removed,
             inserted = inserted,
-            fileContent = doc.text,
-            timestampMs = System.currentTimeMillis(),
+            fileContent = currentContent,
+            timestampMs = now,
+            totalChars = inserted.length + removed.length,
+            totalLines = maxOf(0, inserted.count { it == '\n' }) + maxOf(0, removed.count { it == '\n' }),
         )
 
-        synchronized(historyLock) {
-            // Capture file content before the first tracked edit for
-            // Sweep's original-content context chunk.
-            if (originalFileContent == null) {
-                originalFileContent = doc.text
-            }
-            if (pendingDelta?.tryMerge(delta) != true) {
-                flushPendingDeltaLocked()
-                pendingDelta = delta
-            }
-        }
-
-        // Give the active hint a chance to consume the typed character(s)
-        // before dismissing.  This keeps ghost text alive as the user types
-        // into a completion, and strips auto-inserted closing brackets that
-        // IntelliJ smart-keys inject (e.g. `>` in HTML, `}` in code).
         val consumed = NesHintManager.consumeTyped(editor, inserted, removed)
         if (!consumed) {
             NesHintManager.dismiss(editor)
-            schedulePredict(editor, filepath, doc.text)
+            schedulePredict()
         }
     }
 
-    private fun schedulePredict(editor: Editor, filepath: String, content: String) {
+    private fun schedulePredict() {
         debounceJob?.cancel()
         debounceJob = scope.launch {
             delay(settings.nesDebounceMs.toLong())
 
-            val cursor = withContext(Dispatchers.Main) {
-                editor.caretModel.logicalPosition
-            }
+            val requestContext = withContext(Dispatchers.Main) {
+                buildRequestContext()
+            } ?: return@launch
 
-            val deltasJson = synchronized(historyLock) {
-                flushPendingDeltaLocked()
-                Json.encodeToString(history.toList())
-            }
-            val origContent = synchronized(historyLock) {
-                originalFileContent ?: ""
-            }
             val result = runCatching {
                 bridge.predictNextEdit(
                     baseUrl = settings.baseUrl,
                     apiKey = settings.apiKey,
                     model = settings.model,
+                    completionModel = settings.completionModel,
                     nesPromptStyle = settings.nesPromptStyle,
-                    deltasJson = deltasJson,
-                    cursorFilepath = filepath,
-                    cursorLine = cursor.line,
-                    cursorCol = cursor.column,
-                    fileContent = content,
-                    language = guessLanguage(filepath),
+                    deltasJson = tracker.snapshotHistoryJson(),
+                    cursorFilepath = requestContext.filepath,
+                    cursorLine = requestContext.cursorLine,
+                    cursorCol = requestContext.cursorCol,
+                    fileContent = requestContext.content,
+                    language = requestContext.language,
                     completionEndpoint = settings.completionEndpoint,
-                    originalFileContent = origContent,
+                    originalFileContent = requestContext.originalContent,
                 )
             }.getOrNull()
 
@@ -238,6 +159,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 val hint = runCatching { Json.decodeFromString<NesHint>(result) }.getOrNull()
                 if (hint != null) {
                     withContext(Dispatchers.Main) {
+                        if (buildRequestContext() == null) return@withContext
                         NesHintManager.show(editor, hint)
                     }
                 }
@@ -245,19 +167,72 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         }
     }
 
-    private fun flushPendingDelta() {
-        synchronized(historyLock) {
-            flushPendingDeltaLocked()
+    private fun buildRequestContext(): NesRequestContext? {
+        val project = editor.project ?: return null
+        val filepath = absoluteUnixPath(editor.document) ?: return null
+        if (getSuppressionReason(project, filepath) != null) return null
+
+        val content = editor.document.text
+        val originalContent = tracker.getOriginalContent(filepath) ?: content
+        if (content == originalContent) return null
+
+        val cursor = editor.caretModel.logicalPosition
+        return NesRequestContext(
+            filepath = filepath,
+            cursorLine = cursor.line,
+            cursorCol = cursor.column,
+            content = content,
+            originalContent = originalContent,
+            language = detectLanguageId(project, editor.document),
+        )
+    }
+
+    private fun getSuppressionReason(project: com.intellij.openapi.project.Project, filepath: String): String? {
+        if (settings.isAutocompleteSnoozed()) return "snoozed"
+        if (settings.shouldExcludeFromAutocomplete(filepath)) return "excluded file"
+        if (FileEditorManager.getInstance(project).selectedTextEditor != editor) return "inactive document"
+
+        val window = SwingUtilities.getWindowAncestor(editor.contentComponent)
+        if (window != null && !window.isFocused) return "window not focused"
+
+        val focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner
+        if (focusOwner == null) return "editor not focused"
+        if (!SwingUtilities.isDescendingFrom(focusOwner, editor.contentComponent) && focusOwner !== editor.contentComponent) {
+            return "editor not focused"
         }
+
+        val selectionModel = editor.selectionModel
+        if (selectionModel.hasSelection()) {
+            val startLine = editor.document.getLineNumber(selectionModel.selectionStart)
+            val endLine = editor.document.getLineNumber(selectionModel.selectionEnd)
+            if (startLine != endLine || selectionModel.selectedText?.contains('\n') == true) {
+                return "multi-line selection"
+            }
+        }
+        if (tracker.wasRecentMultiLineSelection(filepath, 5_000L)) return "multi-line selection"
+
+        if (editor.isViewer || !editor.document.isWritable) return "read-only document"
+        if (TemplateManager.getInstance(project).getActiveTemplate(editor) != null) {
+            return "snippet/template mode"
+        }
+        if (tracker.wasRecentBulkChange(filepath, 1_500L, 200, 8)) return "recent bulk edit"
+
+        return null
     }
 
-    private fun flushPendingDeltaLocked() {
-        val delta = pendingDelta?.toEditDelta() ?: return
-        if (history.size >= MAX_HISTORY_LEN) history.removeFirst()
-        history.addLast(delta)
-        pendingDelta = null
+    private fun buildPreviousContent(currentContent: String, event: DocumentEvent): String {
+        val prefix = currentContent.substring(0, event.offset)
+        val suffixStart = (event.offset + event.newLength).coerceAtMost(currentContent.length)
+        val suffix = currentContent.substring(suffixStart)
+        return prefix + event.oldFragment + suffix
     }
-
-    private fun guessLanguage(filepath: String): String =
-        filepath.substringAfterLast('.', "").lowercase()
 }
+
+private data class NesRequestContext(
+    val filepath: String,
+    val cursorLine: Int,
+    val cursorCol: Int,
+    val content: String,
+    val originalContent: String,
+    val language: String,
+)

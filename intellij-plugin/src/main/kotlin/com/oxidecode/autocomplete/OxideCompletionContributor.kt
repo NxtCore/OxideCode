@@ -3,9 +3,9 @@ package com.oxidecode.autocomplete
 import com.intellij.codeInsight.completion.*
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.openapi.components.service
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.vfs.VfsUtilCore
 import com.oxidecode.CoreBridge
+import com.oxidecode.absoluteUnixPath
+import com.oxidecode.detectLanguageId
 import com.oxidecode.settings.OxideCodeSettings
 
 /**
@@ -29,15 +29,12 @@ class OxideCompletionContributor : CompletionContributor() {
         val offset = parameters.offset
         val project = parameters.originalFile.project
 
-        val filepath = FileDocumentManager.getInstance()
-            .getFile(document)
-            ?.let { VfsUtilCore.getRelativePath(it, project.baseDir ?: return@let it.path) }
-            ?: return
+        val filepath = absoluteUnixPath(document) ?: return
 
         val text = document.text
         val prefix = text.substring(0, offset)
         val suffix = text.substring(offset)
-        val language = parameters.originalFile.language.id.lowercase()
+        val language = detectLanguageId(project, document)
 
         val bridge = service<CoreBridge>()
 

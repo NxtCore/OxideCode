@@ -9,9 +9,9 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
-import com.intellij.openapi.fileEditor.FileDocumentManager
-import com.intellij.openapi.vfs.VfsUtilCore
 import com.oxidecode.CoreBridge
+import com.oxidecode.absoluteUnixPath
+import com.oxidecode.detectLanguageId
 import com.oxidecode.settings.OxideCodeSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,13 +77,8 @@ private class InlineCompletionDocumentListener(
         val document = editor.document
         val offset = editor.caretModel.offset.coerceIn(0, document.textLength)
         val text = document.text
-        val filepath = FileDocumentManager.getInstance()
-            .getFile(document)
-            ?.let { vf ->
-                VfsUtilCore.getRelativePath(vf, project.baseDir ?: return@let vf.path) ?: vf.path
-            }
-            ?: return
-        val language = filepath.substringAfterLast('.', "").lowercase()
+        val filepath = absoluteUnixPath(document) ?: return
+        val language = detectLanguageId(project, document)
         val prefix = text.substring(0, offset)
         val suffix = text.substring(offset)
         val version = requestVersion.incrementAndGet()

@@ -13,6 +13,8 @@ class OxideCodeConfigurable : Configurable {
     private val apiKeyField = JPasswordField(40)
     private val modelField = JTextField(40)
     private val completionModelField = JTextField(40)
+    private val exclusionPatternsArea = JTextArea(4, 40)
+    private val nextEditSuggestionsEnabledBox = JCheckBox("Enable Next Edit Suggestions")
     private val nesEnabledBox = JCheckBox("Enable Next Edit Suggestions")
     private val nesDebounceMsField = JSpinner(SpinnerNumberModel(300, 50, 5000, 50))
     private val nesPromptStyleBox = JComboBox(arrayOf("generic", "zeta1", "zeta2", "sweep"))
@@ -27,6 +29,10 @@ class OxideCodeConfigurable : Configurable {
             .addLabeledComponent("API key (empty for local models):", apiKeyField)
             .addLabeledComponent("Model:", modelField)
             .addLabeledComponent("Completion model (optional, faster):", completionModelField)
+            .addLabeledComponent(
+                "Autocomplete exclusion patterns:",
+                JScrollPane(exclusionPatternsArea),
+            )
             .addSeparator()
             .addLabeledComponent(
                 "Completion endpoint:",
@@ -45,6 +51,7 @@ class OxideCodeConfigurable : Configurable {
                 String(apiKeyField.password) != settings.apiKey ||
                 modelField.text != settings.model ||
                 completionModelField.text != settings.completionModel ||
+                exclusionPatternsArea.text != settings.autocompleteExclusionPatterns ||
                 nesEnabledBox.isSelected != settings.nesEnabled ||
                 (nesDebounceMsField.value as Int) != settings.nesDebounceMs ||
                 nesPromptStyleBox.selectedItem as String != settings.nesPromptStyle ||
@@ -56,6 +63,7 @@ class OxideCodeConfigurable : Configurable {
         settings.apiKey = String(apiKeyField.password)
         settings.model = modelField.text.trim()
         settings.completionModel = completionModelField.text.trim()
+        settings.autocompleteExclusionPatterns = exclusionPatternsArea.text
         settings.nesEnabled = nesEnabledBox.isSelected
         settings.nesDebounceMs = nesDebounceMsField.value as Int
         settings.nesPromptStyle = nesPromptStyleBox.selectedItem as String
@@ -67,6 +75,7 @@ class OxideCodeConfigurable : Configurable {
         apiKeyField.text = settings.apiKey
         modelField.text = settings.model
         completionModelField.text = settings.completionModel
+        exclusionPatternsArea.text = settings.autocompleteExclusionPatterns
         nesEnabledBox.isSelected = settings.nesEnabled
         nesDebounceMsField.value = settings.nesDebounceMs
         nesPromptStyleBox.selectedItem = settings.nesPromptStyle
