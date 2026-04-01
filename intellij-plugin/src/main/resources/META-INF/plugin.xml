@@ -43,15 +43,21 @@
             implementationClass="com.oxidecode.autocomplete.OxideCompletionContributor"
             order="first"/>
 
+        <!-- Override EditorTab so Tab accepts NES/inline hints before any other
+             handler (Emmet, smart-indent, etc.) gets a chance to fire. -->
+        <editorActionHandler action="EditorTab"
+            implementationClass="com.oxidecode.nes.NesTabActionHandler"
+            order="first"/>
 
     </extensions>
 
     <actions>
+        <!-- No Tab shortcut here — Tab is handled by NesTabActionHandler above,
+             which delegates to the original handler when no hint is active. -->
         <action id="oxidecode.acceptNes"
                 class="com.oxidecode.nes.AcceptNesAction"
                 text="Accept Next Edit Suggestion"
                 description="Apply the OxideCode NES prediction">
-            <keyboard-shortcut keymap="$default" first-keystroke="TAB"/>
         </action>
         <action id="oxidecode.dismissNes"
                 class="com.oxidecode.nes.DismissNesAction"

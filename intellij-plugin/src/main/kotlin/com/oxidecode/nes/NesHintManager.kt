@@ -10,50 +10,77 @@ import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.util.TextRange
-import com.intellij.openapi.ui.popup.JBPopup
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
-import com.intellij.ui.awt.RelativePoint
-import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.oxidecode.autocomplete.InlineCompletionManager
 import com.oxidecode.editor.BlockGhostTextRenderer
+import com.oxidecode.editor.CursorLineHintRenderer
 import com.oxidecode.editor.GhostTextDisplayParts
 import com.oxidecode.editor.InlineGhostTextRenderer
+import com.oxidecode.editor.NesExtraLinesHintRenderer
+import com.oxidecode.editor.NesMultilineOverlayRenderer
 import com.oxidecode.editor.NesOverlaySegment
 import com.oxidecode.editor.NesOverlayTextRenderer
+import com.oxidecode.editor.TabJumpHintInlayRenderer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import java.awt.Font
-import java.awt.Point
-import javax.swing.BoxLayout
-import javax.swing.JComponent
-import javax.swing.JPanel
-import javax.swing.JTextArea
-import com.intellij.codeInsight.hint.HintManager
-import com.intellij.codeInsight.hint.HintManagerImpl
-import com.intellij.ui.LightweightHint
-import com.oxidecode.editor.TabJumpHintInlayRenderer
-import kotlin.math.abs
+import java.awt.Color
+
 
 /**
  * Global manager for the currently active NES hint in any editor.
  *
  * Only one hint is shown at a time across all editors.
+ *
+ * Display strategy mirrors the VS Code extension's `JumpEditManager`:
+ *
+ *  INLINE  – caret is within [EDIT_RANGE_PADDING_ROWS] of the edit and the
+ *             edit is after the cursor → show plain italic ghost text.
+ *
+ *  JUMP    – edit is far from cursor or before cursor:
+ *            • Red highlights on removed characters
+ *            • Per-line green-pill overlay boxes at every changed target line
+ *            • Multi-line groups → single stacked overlay at first line
+ *            • (+N lines) indicator when new code is longer than original
+ *            • Cursor-line hint: "→ Edit at line N  [TAB] ✓  [ESC] ✗"
+ *            • "TAB to jump here" inlay at the target line
+ *
+ *  SUPPRESS – single-newline-boundary edge case → no display.
  */
 object NesHintManager {
 
-    private const val MIN_JUMP_HINT_LINE_DISTANCE = 5
+    // ── Active state ──────────────────────────────────────────────────────────
 
-    private var activeHighlighter: RangeHighlighter? = null
+    /** The single gutter-icon highlighter / deletion strikethrough. */
+    private var activeGutterHighlighter: RangeHighlighter? = null
+
+    /** Ghost text / same-line overlay inlays (inline + block parts). */
     private var activeInlineInlay: Inlay<*>? = null
     private var activeBlockInlay: Inlay<*>? = null
-    private var activeEditor: Editor? = null
-    private var activePopup: JBPopup? = null
+
+    /** Jump-mode: per-line diff overlay inlays at target lines. */
+    private val activeDiffInlays: MutableList<Inlay<*>> = mutableListOf()
+
+    /** Jump-mode: red removal highlights for replaced/deleted characters. */
+    private val activeRemovalHighlighters: MutableList<RangeHighlighter> = mutableListOf()
+
+    /** Jump-mode: cursor-line hint inlay ("→ Edit at line N  [TAB] ✓  [ESC] ✗"). */
+    private var activeCursorLineHint: Inlay<*>? = null
+
+    /** "TAB to jump here" inlay on the prediction line. */
     private var activeJumpHint: Inlay<*>? = null
+
+    private var activeEditor: Editor? = null
     private var activePreview: NesDisplayPreview? = null
+
+    /** The cursor line at the time the hint was displayed; used to auto-clear on movement. */
+    var originCursorLine: Int = -1
+        private set
+
     var activeHint: NesHint? = null
         private set
+
+    // ── Public API ────────────────────────────────────────────────────────────
 
     fun show(editor: Editor, hint: NesHint, isJump: Boolean = false) {
         dismiss(editor)
@@ -66,124 +93,371 @@ object NesHintManager {
 
         val preview = NesDisplayPreview.create(editor, hint, ::offsetFor) ?: return
 
-        // Pure deletions get strikethrough + red tint so the user immediately
-        // understands the highlighted content will be removed.  Insertions and
-        // replacements keep the italic gray box style.
+        // ── Gutter highlighter (always shown) ────────────────────────────────
         val isDeletion = hint.replacement.isEmpty() && hint.selectionToRemove != null
-        if (isDeletion) {
+        activeGutterHighlighter = if (isDeletion) {
             val attrs = TextAttributes().apply {
                 foregroundColor = JBColor(0xCC3333, 0xFF6666)
                 effectType = EffectType.STRIKEOUT
                 effectColor = JBColor(0xCC3333, 0xFF6666)
             }
-
-            activeHighlighter = editor.markupModel.addRangeHighlighter(
+            editor.markupModel.addRangeHighlighter(
                 preview.highlightStartOffset,
                 preview.highlightEndOffset,
                 HighlighterLayer.LAST,
                 attrs,
                 HighlighterTargetArea.EXACT_RANGE,
-            ).also { h ->
-                h.gutterIconRenderer = NesGutterIcon(preview)
-                h.errorStripeTooltip = preview.tooltipHtml
-                h.isThinErrorStripeMark = true
-            }
+            )
         } else {
-            activeHighlighter = editor.markupModel.addRangeHighlighter(
+            editor.markupModel.addRangeHighlighter(
                 preview.highlightStartOffset,
                 preview.highlightStartOffset,
                 HighlighterLayer.LAST,
                 null,
                 HighlighterTargetArea.EXACT_RANGE,
-            ).also { h ->
-                h.gutterIconRenderer = NesGutterIcon(preview)
-                h.errorStripeTooltip = preview.tooltipHtml
-                h.isThinErrorStripeMark = true
-            }
+            )
+        }.also { h ->
+            h.gutterIconRenderer = NesGutterIcon(preview)
+            h.errorStripeTooltip = preview.tooltipHtml
+            h.isThinErrorStripeMark = true
         }
 
+        // ── Classify the edit display mode ───────────────────────────────────
         val caretOffset = editor.caretModel.offset
         val caretLine = document.getLineNumber(caretOffset)
-        val predictionLine = document.getLineNumber(preview.jumpOffset)
-        val editOnDifferentLine = predictionLine != caretLine
+        val documentText = document.text
+        val documentLength = documentText.length
+        val atEndOfDocument = caretOffset >= documentLength
+        val isOnSingleNewlineBoundary =
+            caretOffset > 0 &&
+            !atEndOfDocument &&
+            documentText[caretOffset - 1] == '\n' &&
+            documentText[caretOffset] != '\n'
 
-        // Display mode — four mutually exclusive states in priority order:
-        //
-        // 1. DIFFERENT LINE: show nothing on the current line; TAB-jump hint
-        //    appears on the prediction line so the user knows where to go.
-        //
-        // 2. JUMPED + overlay segments: caret was just moved here by Tab and
-        //    the user hasn't typed yet.  Show the green-pill overlay after the
-        //    line end so they can see exactly what will change.
-        //
-        // 2b. BEHIND CARET + overlay segments: the diff point is behind the live
-        //    caret on the same line (e.g. Sweep predicted "website" but the user
-        //    typed "webse" — the insertion of "it" is before the trailing "e").
-        //    There is no meaningful ghost text to show at the cursor, so display
-        //    the green-pill overlay immediately (no Tab-jump required) so the
-        //    user can see the correction and Tab-accept it.
-        //
-        // 3. TYPING (ghost text): displayOffset matches the live caret, meaning
-        //    the text will render right at the cursor.  Show plain italic gray
-        //    ghost text.  Covers both pure insertions AND replacement hints where
-        //    the user already typed the common prefix (e.g. typed "b", hint says
-        //    replace "b" with "bun" — displayOffset lands after "b" = caretOffset).
-        //
-        // Otherwise: show nothing (displayOffset drifted ahead of caret — stale).
-        val behindCaret  = preview.displayOffset < caretOffset
-        val useOverlay   = !editOnDifferentLine && (isJump || behindCaret) && preview.overlaySegments.isNotEmpty()
-        val useGhostText = !editOnDifferentLine && !useOverlay && preview.displayOffset == caretOffset
+        val editStartLine = document.getLineNumber(preview.jumpOffset)
+        val editEndLine = if (hint.selectionToRemove != null) {
+            document.getLineNumber(preview.highlightEndOffset)
+        } else editStartLine
 
-        if (useOverlay) {
-            // ── Same line, replace prediction, caret not yet in edit range ────
-            // Show the changed word in a green pill floating after the line end.
-            val lineEndOffset = document.getLineEndOffset(predictionLine)
-            activeInlineInlay = editor.inlayModel.addAfterLineEndElement(
-                lineEndOffset,
-                true,
-                NesOverlayTextRenderer(preview.overlaySegments)
+        val classification = classifyEditDisplay(
+            EditDisplayClassifierInput(
+                cursorLine = caretLine,
+                editStartLine = editStartLine,
+                editEndLine = editEndLine,
+                cursorOffset = caretOffset,
+                startIndex = preview.jumpOffset,
+                completion = hint.replacement,
+                isOnSingleNewlineBoundary = isOnSingleNewlineBoundary,
             )
-            activeBlockInlay = null
-        } else if (useGhostText) {
-            // ── Same line, caret at edit / pure insertion — user is typing ────
-            // Show plain italic gray ghost text right after the caret, exactly
-            // like a normal autocomplete suggestion.
-            val display = GhostTextDisplayParts.from(preview.displayText)
-            activeInlineInlay = display.inlineText
-                .takeUnless { it.isEmpty() }
-                ?.let { editor.inlayModel.addInlineElement(preview.displayOffset, InlineGhostTextRenderer(it, highlighted = false)) }
-            activeBlockInlay = display.blockText
-                .takeUnless { it.isEmpty() }
-                ?.let {
-                    editor.inlayModel.addBlockElement(
-                        preview.displayOffset,
-                        true,
-                        false,
-                        0,
-                        BlockGhostTextRenderer(it, highlighted = false)
-                    )
-                }
-        } else {
-            // ── Different line — no overlay or ghost text on the current line ──
-            activeInlineInlay = null
-            activeBlockInlay = null
-        }
+        )
 
         activeEditor = editor
         activePreview = preview
         activeHint = hint
+        originCursorLine = caretLine
 
-        // Always show the TAB jump hint on the prediction line when the edit is
-        // on a different line, regardless of distance.
-        activeJumpHint = if (editOnDifferentLine) {
-            showTabJumpHintInlay(editor, preview.jumpOffset)
-        } else if (abs(predictionLine - caretLine) >= MIN_JUMP_HINT_LINE_DISTANCE) {
-            showTabJumpHintInlay(editor, preview.jumpOffset)
-        } else {
-            null
+        when (classification.decision) {
+            EditDisplayDecision.SUPPRESS -> {
+                // Edge case: single-newline-boundary — clean up and return.
+                dismiss(editor)
+                return
+            }
+
+            EditDisplayDecision.JUMP -> {
+                applyJumpModeDecorations(editor, hint, preview, caretLine, editStartLine, editEndLine)
+            }
+
+            EditDisplayDecision.INLINE -> {
+                // ── Near-cursor edit — overlay or ghost text ──────────────────
+                //
+                // Use overlay whenever segments are available (covers all cursor
+                // positions: before, at, or after the edit offset on the same line).
+                // Ghost text at the edit offset is the fallback when no segments
+                // exist (e.g. pure-deletion hints where replacement is empty).
+                val useOverlay = preview.overlaySegments.isNotEmpty()
+                val useGhostText = !useOverlay && preview.displayText.isNotEmpty()
+
+                if (useOverlay) {
+                    val lineEndOffset = document.getLineEndOffset(editStartLine)
+                    activeInlineInlay = editor.inlayModel.addAfterLineEndElement(
+                        lineEndOffset,
+                        true,
+                        NesOverlayTextRenderer(preview.overlaySegments),
+                    )
+                    activeBlockInlay = null
+                } else if (useGhostText) {
+                    val display = GhostTextDisplayParts.from(preview.displayText)
+                    activeInlineInlay = display.inlineText
+                        .takeUnless { it.isEmpty() }
+                        ?.let {
+                            editor.inlayModel.addInlineElement(
+                                preview.displayOffset,
+                                InlineGhostTextRenderer(it, highlighted = false),
+                            )
+                        }
+                    activeBlockInlay = display.blockText
+                        .takeUnless { it.isEmpty() }
+                        ?.let {
+                            editor.inlayModel.addBlockElement(
+                                preview.displayOffset,
+                                true,
+                                false,
+                                0,
+                                BlockGhostTextRenderer(it, highlighted = false),
+                            )
+                        }
+                }
+                // No TAB-to-jump hint in INLINE mode — Tab accepts immediately.
+                activeJumpHint = null
+            }
         }
     }
 
+    // ── Jump mode ─────────────────────────────────────────────────────────────
+
+    /**
+     * Applies the full VS Code-style jump-mode decoration suite:
+     *
+     *  1. Red removal highlights for replaced/deleted characters (per changed line).
+     *  2. Per-line diff overlay boxes at the target lines showing new content.
+     *  3. Multi-line groups rendered as a single stacked overlay at the first line.
+     *  4. (+N lines) indicator when new content is longer than original.
+     *  5. Cursor-line hint: "→ Edit at line N  [TAB] ✓  [ESC] ✗".
+     *  6. "TAB to jump here" inlay at the target line.
+     */
+    private fun applyJumpModeDecorations(
+        editor: Editor,
+        hint: NesHint,
+        preview: NesDisplayPreview,
+        cursorLine: Int,
+        editStartLine: Int,
+        editEndLine: Int,
+    ) {
+        val document = editor.document
+
+        // ── Build originalLines / newLines (mirrors VS Code JumpEditManager) ──
+        val originalLines = mutableListOf<String>()
+        for (i in editStartLine..editEndLine) {
+            if (i < document.lineCount) originalLines.add(document.getLineText(i))
+        }
+        if (originalLines.isEmpty()) return
+
+        val editStartPos = document.getLineStartOffset(editStartLine) +
+            (hint.selectionToRemove?.startCol ?: hint.position.col).coerceAtMost(
+                document.getLineEndOffset(editStartLine) - document.getLineStartOffset(editStartLine)
+            )
+        val editEndPos = if (hint.selectionToRemove != null) {
+            document.getLineStartOffset(editEndLine.coerceAtMost(document.lineCount - 1)) +
+                hint.selectionToRemove.endCol.coerceAtMost(
+                    document.getLineEndOffset(editEndLine.coerceAtMost(document.lineCount - 1)) -
+                    document.getLineStartOffset(editEndLine.coerceAtMost(document.lineCount - 1))
+                )
+        } else editStartPos
+
+        val prefixOnStartLine = originalLines.firstOrNull()
+            ?.substring(0, (hint.selectionToRemove?.startCol ?: hint.position.col)
+                .coerceAtMost(originalLines.first().length))
+            ?: ""
+        val suffixOnEndLine = originalLines.lastOrNull()
+            ?.let { line ->
+                val endCol = hint.selectionToRemove?.endCol ?: hint.position.col
+                line.substring(endCol.coerceAtMost(line.length))
+            }
+            ?: ""
+        val fullNewContent = prefixOnStartLine + hint.replacement + suffixOnEndLine
+        val newLines = fullNewContent.split('\n')
+
+        val maxLines = maxOf(originalLines.size, newLines.size)
+        data class LineDiffEntry(
+            val oldLine: String,
+            val newLine: String,
+            val diff: LineDiff?,
+        )
+        val diffs = (0 until maxLines).map { i ->
+            val old = originalLines.getOrElse(i) { "" }
+            val new = newLines.getOrElse(i) { "" }
+            LineDiffEntry(old, new, getLineDiff(old, new))
+        }
+
+        val isMultilineInsertion =
+            hint.selectionToRemove == null &&
+            hint.replacement.contains('\n') &&
+            editStartPos == editEndPos
+
+        // ── 1. Removal highlights ─────────────────────────────────────────────
+        // Only for replacements/deletions (oldChanged.length > 0), not pure inserts.
+        if (!isMultilineInsertion) {
+            for (i in 0 until originalLines.size) {
+                val entry = diffs.getOrNull(i) ?: continue
+                val diff = entry.diff ?: continue
+                if (diff.oldChanged.isEmpty()) continue
+
+                val docLine = editStartLine + i
+                if (docLine >= document.lineCount) break
+                val lineStart = document.getLineStartOffset(docLine)
+                val removeStart = lineStart + diff.prefixLen
+                val removeEnd = lineStart + diff.prefixLen + diff.oldChanged.length
+                val lineEnd = document.getLineEndOffset(docLine)
+                if (removeStart > lineEnd || removeEnd > lineEnd + 1) continue
+
+                val attrs = TextAttributes().apply {
+                    backgroundColor = REMOVAL_BG_COLOR
+                }
+                val h = editor.markupModel.addRangeHighlighter(
+                    removeStart.coerceAtMost(lineEnd),
+                    removeEnd.coerceAtMost(lineEnd),
+                    HighlighterLayer.SELECTION - 1,
+                    attrs,
+                    HighlighterTargetArea.EXACT_RANGE,
+                )
+                activeRemovalHighlighters.add(h)
+            }
+        }
+
+        // ── 2. Diff overlay inlays at target lines ────────────────────────────
+        // Find which line-indices have additions (newChanged.length > 0).
+        val additionLineIndices = (0 until maxLines)
+            .filter { i -> diffs.getOrNull(i)?.diff?.newChanged?.isNotEmpty() == true }
+
+        // Group consecutive addition lines for the "single grouped inlay" approach.
+        val additionGroups = mutableListOf<MutableList<Int>>()
+        for (idx in additionLineIndices) {
+            val last = additionGroups.lastOrNull()
+            if (last == null || last.last() != idx - 1) {
+                additionGroups.add(mutableListOf(idx))
+            } else {
+                last.add(idx)
+            }
+        }
+        val combinedGroupIndices = additionGroups
+            .filter { it.size > 1 }
+            .flatten()
+            .toSet()
+        val renderedLineIndices = mutableSetOf<Int>()
+
+        val hasAdditions = additionLineIndices.isNotEmpty()
+        val showPreview = hasAdditions
+
+        if (!isMultilineInsertion && showPreview) {
+            // Single-line groups — one overlay per changed line.
+            for (i in 0 until originalLines.size) {
+                val entry = diffs.getOrNull(i) ?: continue
+                val diff = entry.diff ?: continue
+                if (diff.newChanged.isEmpty()) continue
+                if (combinedGroupIndices.contains(i)) continue   // handled as group
+
+                val docLine = editStartLine + i
+                if (docLine >= document.lineCount) continue
+                val lineEndOffset = document.getLineEndOffset(docLine)
+
+                val segments = buildOverlaySegments(entry.oldLine, entry.newLine)
+                if (segments.isEmpty()) continue
+
+                val inlay = editor.inlayModel.addAfterLineEndElement(
+                    lineEndOffset,
+                    true,
+                    NesOverlayTextRenderer(segments),
+                )
+                if (inlay != null) {
+                    activeDiffInlays.add(inlay)
+                    renderedLineIndices.add(i)
+                }
+            }
+
+            // Multi-line groups — a single stacked inlay at the first line.
+            for (group in additionGroups) {
+                if (group.size <= 1) continue
+                val firstIdx = group.first()
+                val docLine = editStartLine + firstIdx
+                if (docLine >= document.lineCount) continue
+                val lineEndOffset = document.getLineEndOffset(docLine)
+
+                val lineSegments = group.map { i ->
+                    val entry = diffs.getOrNull(i) ?: return@map emptyList()
+                    buildOverlaySegments(entry.oldLine, entry.newLine)
+                }
+                if (lineSegments.all { it.isEmpty() }) continue
+
+                val inlay = editor.inlayModel.addAfterLineEndElement(
+                    lineEndOffset,
+                    true,
+                    NesMultilineOverlayRenderer(lineSegments),
+                )
+                if (inlay != null) {
+                    activeDiffInlays.add(inlay)
+                    for (i in group) renderedLineIndices.add(i)
+                }
+            }
+        }
+
+        // ── 3. Pure multiline insertion ───────────────────────────────────────
+        if (isMultilineInsertion) {
+            val addedText = if (hint.replacement.endsWith('\n'))
+                hint.replacement.dropLast(1) else hint.replacement
+            val addedLines = if (addedText.isNotEmpty()) addedText.split('\n') else listOf("")
+
+            val lineSegmentsList = addedLines.map { line ->
+                if (line.isNotEmpty()) listOf(NesOverlaySegment(line, highlighted = true))
+                else emptyList()
+            }
+
+            val docLine = editStartLine.coerceAtMost(document.lineCount - 1)
+            val lineEndOffset = document.getLineEndOffset(docLine)
+
+            val inlay = editor.inlayModel.addAfterLineEndElement(
+                lineEndOffset,
+                true,
+                NesMultilineOverlayRenderer(lineSegmentsList),
+            )
+            if (inlay != null) {
+                activeDiffInlays.add(inlay)
+                addedLines.indices.forEach { renderedLineIndices.add(it) }
+            }
+        }
+
+        // ── 4. (+N lines) indicator ───────────────────────────────────────────
+        if (!isMultilineInsertion && newLines.size > originalLines.size) {
+            val extraLinesRendered = renderedLineIndices.any { it >= originalLines.size }
+            if (!extraLinesRendered) {
+                val extraCount = newLines.size - originalLines.size
+                val lastOrigDocLine = (editStartLine + originalLines.size - 1)
+                    .coerceAtMost(document.lineCount - 1)
+                val lineEndOffset = document.getLineEndOffset(lastOrigDocLine)
+                val inlay = editor.inlayModel.addAfterLineEndElement(
+                    lineEndOffset,
+                    true,
+                    NesExtraLinesHintRenderer(extraCount),
+                )
+                if (inlay != null) activeDiffInlays.add(inlay)
+            }
+        }
+
+        // ── 5. Cursor-line hint ───────────────────────────────────────────────
+        // Show "→ Edit at line N  [TAB] ✓  [ESC] ✗" on the cursor's current line
+        // when the cursor is not on the affected lines (mirrors VS Code HINT_DECORATION_TYPE).
+        val isOnAffectedLine = cursorLine in editStartLine..editEndLine
+        if (!isOnAffectedLine) {
+            val cursorLineEnd = document.getLineEndOffset(
+                cursorLine.coerceAtMost(document.lineCount - 1)
+            )
+            activeCursorLineHint = editor.inlayModel.addAfterLineEndElement(
+                cursorLineEnd,
+                true,
+                CursorLineHintRenderer(editStartLine + 1), // 1-based for display
+            )
+        }
+
+        // ── 6. "TAB to jump here" inlay at prediction line ───────────────────
+        activeJumpHint = showTabJumpHintInlay(editor, preview.jumpOffset)
+    }
+
+    // ── Accept / dismiss ──────────────────────────────────────────────────────
+
+    /**
+     * First Tab press: if caret is not in the edit range → jump there and re-show
+     * the hint so the diff overlay is visible at the now-visible target lines.
+     * Second Tab press (caret already in range): apply the edit.
+     */
     fun acceptOrJump(editor: Editor) {
         if (editor != activeEditor) return
 
@@ -193,12 +467,7 @@ object NesHintManager {
         val jumpEnd = maxOf(preview.highlightEndOffset, jumpStart)
 
         if (caretOffset !in jumpStart..jumpEnd) {
-            // Capture the hint before dismiss clears it.
             val hint = activeHint ?: return
-            // Dismiss the current display (clears inlays, jump hint, etc.) then
-            // move the caret, and re-show with the same hint so the display mode
-            // is recalculated — caret is now on the prediction line, so the
-            // floating overlay will be rendered instead of nothing.
             dismiss(editor)
             editor.caretModel.moveToOffset(jumpStart)
             editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
@@ -237,73 +506,94 @@ object NesHintManager {
     fun dismiss(editor: Editor) {
         if (activeEditor != null && editor != activeEditor) return
 
-        activeHighlighter?.let { editor.markupModel.removeHighlighter(it) }
+        // Gutter / deletion strikethrough.
+        activeGutterHighlighter?.let { editor.markupModel.removeHighlighter(it) }
+        activeGutterHighlighter = null
+
+        // Inline / block ghost text (INLINE mode).
         activeInlineInlay?.dispose()
         activeBlockInlay?.dispose()
-        activePopup?.cancel()
-        activeHighlighter = null
         activeInlineInlay = null
         activeBlockInlay = null
-        activePopup = null
+
+        // Jump-mode diff overlays.
+        activeDiffInlays.forEach { it.dispose() }
+        activeDiffInlays.clear()
+
+        // Jump-mode removal highlights.
+        activeRemovalHighlighters.forEach { editor.markupModel.removeHighlighter(it) }
+        activeRemovalHighlighters.clear()
+
+        // Cursor-line hint.
+        activeCursorLineHint?.dispose()
+        activeCursorLineHint = null
+
+        // "TAB to jump here" inlay.
+        activeJumpHint?.dispose()
+        activeJumpHint = null
+
         activeEditor = null
         activePreview = null
         activeHint = null
-        activeJumpHint?.dispose()
-        activeJumpHint = null
+        originCursorLine = -1
     }
 
     fun isShowing(editor: Editor? = activeEditor): Boolean =
         editor != null && editor == activeEditor && activeHint != null
 
+    // ── Cursor-move auto-clear ────────────────────────────────────────────────
+
     /**
-     * Called on every document change while a hint is active.
+     * Called by [NesEditorListener] on every caret position change.
+     * Clears the hint if the cursor moves off the origin line (mirrors VS Code
+     * `JumpEditManager.handleCursorMove()`).
+     */
+    fun handleCaretMove(editor: Editor, newLine: Int) {
+        if (editor != activeEditor) return
+        if (originCursorLine < 0) return
+        if (newLine != originCursorLine) {
+            dismiss(editor)
+        }
+    }
+
+    // ── Typing-through support ────────────────────────────────────────────────
+
+    /**
+     * Handles two smart-key cases while a hint is active:
      *
-     * Handles two cases that IntelliJ smart-keys cause in HTML/code files:
-     *
-     * 1. **Prefix match** — the user typed the next character(s) of the
-     *    replacement.  Trim them from the front of the hint and re-show the
-     *    remainder so the ghost text "follows" the caret.
-     *
-     * 2. **Auto-inserted closing bracket** — IntelliJ inserted a closing
-     *    `}`, `]`, `)`, `"`, `'`, or `>` that already appears at the end of
-     *    the replacement (e.g. typed `r` in HTML → IDE wrapped it as
-     *    `<her></her>`).  Strip the duplicate suffix from the hint so the
-     *    ghost text stays correct.
+     *  1. User typed the next char(s) of the replacement → trim prefix and re-show.
+     *  2. IDE auto-inserted a closing bracket that already ends the replacement
+     *     → strip the duplicate suffix and re-show.
      *
      * Returns `true` if the hint was kept alive (possibly updated), or
-     * `false` if the caller should dismiss + re-predict as normal.
+     * `false` if the caller should dismiss + re-predict.
      */
     fun consumeTyped(editor: Editor, inserted: String, removed: String): Boolean {
         if (editor != activeEditor) return false
         val hint = activeHint ?: return false
 
         // Only handle pure insertions on the completion path (no selectionToRemove).
-        // Replace-predictions (overlay segments) are dismissed normally so the
-        // engine can re-predict after the user edits.
         if (hint.selectionToRemove != null) return false
         if (inserted.isEmpty()) return false
 
         var replacement = hint.replacement
 
-        // ── Case 1: user typed the next chars of the replacement ─────────────
+        // Case 1: user typed the next chars of the replacement.
         if (replacement.startsWith(inserted)) {
             val remaining = replacement.removePrefix(inserted)
             if (remaining.isBlank()) {
-                // Fully typed — dismiss silently, no re-predict needed.
                 dismiss(editor)
                 return true
             }
             val updatedHint = hint.copy(
                 replacement = remaining,
-                position = hint.position.copy(
-                    col = hint.position.col + inserted.length
-                ),
+                position = hint.position.copy(col = hint.position.col + inserted.length),
             )
             show(editor, updatedHint)
             return true
         }
 
-        // ── Case 2: IDE auto-inserted a closing bracket at the end ───────────
+        // Case 2: IDE auto-inserted a closing bracket at the end.
         val closingBrackets = setOf('}', ']', ')', '"', '\'', '>')
         if (inserted.length == 1 && inserted[0] in closingBrackets && replacement.endsWith(inserted)) {
             val trimmed = replacement.dropLast(inserted.length)
@@ -319,12 +609,7 @@ object NesHintManager {
         return false
     }
 
-    private fun offsetFor(document: com.intellij.openapi.editor.Document, line: Int, col: Int): Int {
-        val safeLine = line.coerceIn(0, document.lineCount - 1)
-        val lineStart = document.getLineStartOffset(safeLine)
-        val lineEnd = document.getLineEndOffset(safeLine)
-        return lineStart + col.coerceAtMost(lineEnd - lineStart)
-    }
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     fun showTabJumpHintInlay(editor: Editor, offset: Int): Inlay<*>? {
         val safeOffset = offset.coerceIn(0, editor.document.textLength)
@@ -333,58 +618,92 @@ object NesHintManager {
         return editor.inlayModel.addAfterLineEndElement(
             lineEndOffset,
             true,
-            TabJumpHintInlayRenderer()
+            TabJumpHintInlayRenderer(),
         )
     }
 
-    private fun showPreviewPopup(editor: Editor, preview: NesDisplayPreview) {
-        activePopup?.cancel()
-
-        val popup = JBPopupFactory.getInstance()
-            .createComponentPopupBuilder(createPreviewComponent(preview), null)
-            .setRequestFocus(false)
-            .setFocusable(false)
-            .setMovable(false)
-            .setResizable(false)
-            .setCancelOnClickOutside(true)
-            .setCancelOnOtherWindowOpen(true)
-            .setCancelKeyEnabled(false)
-            .createPopup()
-
-        popup.show(RelativePoint(editor.contentComponent, preview.popupAnchor(editor)))
-        activePopup = popup
+    private fun offsetFor(document: com.intellij.openapi.editor.Document, line: Int, col: Int): Int {
+        val safeLine = line.coerceIn(0, document.lineCount - 1)
+        val lineStart = document.getLineStartOffset(safeLine)
+        val lineEnd = document.getLineEndOffset(safeLine)
+        return lineStart + col.coerceAtMost(lineEnd - lineStart)
     }
 
-    private fun createPreviewComponent(preview: NesDisplayPreview): JComponent {
-        val panel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(10)
+    private fun com.intellij.openapi.editor.Document.getLineText(line: Int): String {
+        val start = getLineStartOffset(line)
+        val end = getLineEndOffset(line)
+        return getText(TextRange(start, end))
+    }
+
+    // ── Line-level diff (port of VS Code JumpEditManager.getLineDiff) ─────────
+
+    private data class LineDiff(
+        val oldChanged: String,
+        val newChanged: String,
+        val prefixLen: Int,
+        val suffixLen: Int,
+    )
+
+    /**
+     * Computes per-character prefix/suffix common to both lines and returns the
+     * changed segments. Returns `null` when the lines are identical.
+     */
+    private fun getLineDiff(oldLine: String, newLine: String): LineDiff? {
+        if (oldLine == newLine) return null
+
+        var prefixLen = 0
+        val minLen = minOf(oldLine.length, newLine.length)
+        while (prefixLen < minLen && oldLine[prefixLen] == newLine[prefixLen]) prefixLen++
+
+        var suffixLen = 0
+        while (
+            suffixLen < minLen - prefixLen &&
+            oldLine[oldLine.length - 1 - suffixLen] == newLine[newLine.length - 1 - suffixLen]
+        ) suffixLen++
+
+        val oldChanged = oldLine.substring(prefixLen, oldLine.length - suffixLen)
+        val newChanged = newLine.substring(prefixLen, newLine.length - suffixLen)
+
+        return LineDiff(oldChanged, newChanged, prefixLen, suffixLen)
+    }
+
+    /**
+     * Builds the overlay segment list for one changed line.
+     * Unchanged prefix/suffix → unhighlighted; changed middle → highlighted green pill.
+     *
+     * Mirrors `NesDisplayPreview.Companion.buildOverlaySegments()` but works for
+     * any old→new pair (including multiline context).
+     */
+    private fun buildOverlaySegments(before: String, after: String): List<NesOverlaySegment> {
+        if (after.isEmpty()) return emptyList()
+        // Multiline lines won't reach here (handled separately), but guard anyway.
+        if (before.contains('\n') || after.contains('\n')) return listOf(NesOverlaySegment(after, highlighted = true))
+
+        val prefixLen = before.commonPrefixWith(after).length
+        val maxSuffixLen = minOf(before.length - prefixLen, after.length - prefixLen)
+        var suffixLen = 0
+        while (suffixLen < maxSuffixLen &&
+            before[before.length - 1 - suffixLen] == after[after.length - 1 - suffixLen]) {
+            suffixLen++
         }
 
-        panel.add(JBLabel(preview.popupTitle).apply {
-            font = font.deriveFont(Font.BOLD.toFloat())
-            alignmentX = 0f
-        })
+        val prefix = after.substring(0, prefixLen)
+        val changed = after.substring(prefixLen, after.length - suffixLen)
+        val suffix = after.substring(after.length - suffixLen)
 
-        panel.add(JBLabel("Tab to jump/apply, Esc to dismiss").apply {
-            foreground = JBColor.GRAY
-            border = JBUI.Borders.emptyTop(4)
-            alignmentX = 0f
-        })
-
-        panel.add(JTextArea(preview.popupText).apply {
-            isEditable = false
-            isOpaque = false
-            lineWrap = false
-            wrapStyleWord = false
-            border = JBUI.Borders.emptyTop(8)
-            font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
-            alignmentX = 0f
-        })
-
-        return panel
+        return buildList {
+            if (prefix.isNotEmpty()) add(NesOverlaySegment(prefix, highlighted = false))
+            if (changed.isNotEmpty()) add(NesOverlaySegment(changed, highlighted = true))
+            if (suffix.isNotEmpty()) add(NesOverlaySegment(suffix, highlighted = false))
+            if (isEmpty() && after.isNotEmpty()) add(NesOverlaySegment(after, highlighted = true))
+        }
     }
+
+    /** Red background for replaced/deleted character ranges. */
+    private val REMOVAL_BG_COLOR: Color = Color(255, 90, 90, 56)   // rgba(255,90,90,0.22)
 }
+
+// ── NesDisplayPreview ─────────────────────────────────────────────────────────
 
 data class NesDisplayPreview(
     val displayOffset: Int,
@@ -397,12 +716,12 @@ data class NesDisplayPreview(
     val popupText: String,
     val overlaySegments: List<NesOverlaySegment> = emptyList(),
 ) {
-    fun popupAnchor(editor: Editor): Point {
+    fun popupAnchor(editor: Editor): java.awt.Point {
         val point = editor.visualPositionToXY(editor.offsetToVisualPosition(jumpOffset))
         val visible = editor.scrollingModel.visibleArea
         val anchorX = (point.x + 28).coerceIn(visible.x + 8, visible.x + visible.width - 24)
         val anchorY = point.y.coerceIn(visible.y + 8, visible.y + visible.height - 24)
-        return Point(anchorX, anchorY)
+        return java.awt.Point(anchorX, anchorY)
     }
 
     companion object {
@@ -414,7 +733,8 @@ data class NesDisplayPreview(
             val document = editor.document
             val startOffset = offsetFor(document, hint.position.line, hint.position.col)
             val removeRange = hint.selectionToRemove?.let { range ->
-                offsetFor(document, range.startLine, range.startCol) to offsetFor(document, range.endLine, range.endCol)
+                offsetFor(document, range.startLine, range.startCol) to
+                    offsetFor(document, range.endLine, range.endCol)
             }
             val removedText = removeRange?.let { (start, end) ->
                 document.getText(TextRange(start, end))
@@ -429,7 +749,9 @@ data class NesDisplayPreview(
             val fallbackHighlightStart = removeRange?.first ?: startOffset
             val fallbackHighlightEnd = removeRange?.second ?: startOffset
             val useFallback =
-                compactDiff.displayText.isEmpty() && compactHighlightStart == compactHighlightEnd && fallbackDisplayText.isNotEmpty()
+                compactDiff.displayText.isEmpty() &&
+                compactHighlightStart == compactHighlightEnd &&
+                fallbackDisplayText.isNotEmpty()
 
             val displayText = if (useFallback) fallbackDisplayText else compactDiff.displayText
             val displayOffset = if (useFallback) startOffset else compactDisplayOffset
@@ -471,7 +793,8 @@ data class NesDisplayPreview(
             val maxSuffixLength = minOf(beforeRemainder, afterRemainder)
 
             var suffixLength = 0
-            while (suffixLength < maxSuffixLength && before[before.length - 1 - suffixLength] == after[after.length - 1 - suffixLength]) {
+            while (suffixLength < maxSuffixLength &&
+                before[before.length - 1 - suffixLength] == after[after.length - 1 - suffixLength]) {
                 suffixLength += 1
             }
 
@@ -494,7 +817,8 @@ data class NesDisplayPreview(
             val maxSuffixLength = minOf(beforeRemainder, afterRemainder)
 
             var commonSuffixLength = 0
-            while (commonSuffixLength < maxSuffixLength && before[before.length - 1 - commonSuffixLength] == after[after.length - 1 - commonSuffixLength]) {
+            while (commonSuffixLength < maxSuffixLength &&
+                before[before.length - 1 - commonSuffixLength] == after[after.length - 1 - commonSuffixLength]) {
                 commonSuffixLength += 1
             }
 
@@ -527,10 +851,6 @@ private data class CompactDiff(
 
 // ── Wire types (must match Rust serde output exactly) ────────────────────────
 
-/**
- * Position inside a file, as serialized by the Rust `HintPosition` struct.
- * Fields are snake_case to match Rust's default serde output.
- */
 @Serializable
 data class HintPosition(
     val filepath: String,
@@ -538,10 +858,6 @@ data class HintPosition(
     val col: Int,
 )
 
-/**
- * Selection range to remove before applying a hint replacement,
- * as serialized by the Rust `SelectionRange` struct (snake_case keys).
- */
 @Serializable
 data class HintSelectionRange(
     @SerialName("start_line") val startLine: Int,
@@ -550,12 +866,6 @@ data class HintSelectionRange(
     @SerialName("end_col") val endCol: Int,
 )
 
-/**
- * A predicted next-edit hint returned by the Rust NES engine.
- *
- * Mirrors the Rust `NesHint` struct serialization:
- *   { "position": {...}, "replacement": "...", "selection_to_remove": {...}|null, "confidence": 0.9|null }
- */
 @Serializable
 data class NesHint(
     val position: HintPosition,
@@ -564,12 +874,6 @@ data class NesHint(
     val confidence: Double? = null,
 )
 
-/**
- * A single document change sent TO the Rust engine (outgoing).
- *
- * Kotlin's `@Serializable` emits camelCase keys by default, which matches
- * the `#[serde(rename_all = "camelCase")]` attribute on the Rust `EditDelta`.
- */
 @Serializable
 data class EditDelta(
     val filepath: String,

@@ -3,6 +3,8 @@ package com.oxidecode.nes
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.event.CaretEvent
+import com.intellij.openapi.editor.event.CaretListener
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.EditorFactoryEvent
@@ -23,18 +25,32 @@ import kotlinx.serialization.json.Json
 class NesEditorListener : EditorFactoryListener {
 
     private val listeners = java.util.WeakHashMap<Editor, DocumentListener>()
+    private val caretListeners = java.util.WeakHashMap<Editor, CaretListener>()
 
     override fun editorCreated(event: EditorFactoryEvent) {
         val editor = event.editor
-        val listener = NesDocumentListener(editor)
-        editor.document.addDocumentListener(listener)
-        listeners[editor] = listener
+
+        val docListener = NesDocumentListener(editor)
+        editor.document.addDocumentListener(docListener)
+        listeners[editor] = docListener
+
+        val caretListener = object : CaretListener {
+            override fun caretPositionChanged(e: CaretEvent) {
+                val newLine = e.newPosition.line
+                NesHintManager.handleCaretMove(editor, newLine)
+            }
+        }
+        editor.caretModel.addCaretListener(caretListener)
+        caretListeners[editor] = caretListener
     }
 
     override fun editorReleased(event: EditorFactoryEvent) {
         val editor = event.editor
         listeners.remove(editor)?.let { listener ->
             editor.document.removeDocumentListener(listener)
+        }
+        caretListeners.remove(editor)?.let { listener ->
+            editor.caretModel.removeCaretListener(listener)
         }
     }
 }
