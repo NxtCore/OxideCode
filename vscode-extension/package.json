@@ -2,7 +2,7 @@
 	"name": "oxidecode",
 	"displayName": "OxideCode",
 	"description": "AI autocomplete and next-edit suggestions powered by local and cloud models",
-	"version": "0.1.2",
+	"version": "0.2.0",
 	"publisher": "oxidecode",
 	"icon": "light.png",
 	"engines": {
