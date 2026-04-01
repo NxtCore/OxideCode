@@ -18,7 +18,7 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
         var autocompleteEnabled: Boolean = false,
         var nesEnabled: Boolean = true,
         var nesDebounceMs: Int = 300,
-        var nesPromptStyle: String = "generic",
+        var nesPromptStyle: String = "sweep",
         /** "completions" → /v1/completions (default); "chat_completions" → /v1/chat/completions */
         var completionEndpoint: String = "completions",
     )

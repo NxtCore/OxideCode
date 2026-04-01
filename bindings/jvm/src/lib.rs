@@ -141,7 +141,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
 
 // ─── NES ─────────────────────────────────────────────────────────────────────
 
-/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, nesPromptStyle, deltasJson, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint, originalFileContent) -> String (JSON NesHint)`
+/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, completionModel, nesPromptStyle, deltasJson, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint, originalFileContent) -> String (JSON NesHint)`
 #[no_mangle]
 pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     mut env: JNIEnv,
@@ -149,6 +149,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     base_url: JString,
     api_key: JString,
     model: JString,
+    completion_model: JString,
     nes_prompt_style: JString,
     deltas_json: JString,
     cursor_filepath: JString,
@@ -162,6 +163,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     let base_url: String = env.get_string(&base_url).unwrap().into();
     let api_key: String = env.get_string(&api_key).unwrap().into();
     let model: String = env.get_string(&model).unwrap().into();
+    let completion_model: String = env.get_string(&completion_model).unwrap().into();
     let nes_prompt_style: String = env.get_string(&nes_prompt_style).unwrap().into();
     let deltas_json: String = env.get_string(&deltas_json).unwrap().into();
     let cursor_filepath: String = env.get_string(&cursor_filepath).unwrap().into();
@@ -182,6 +184,12 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         Some(api_key)
     };
 
+    let completion_model_opt: Option<&str> = if completion_model.is_empty() {
+        None
+    } else {
+        Some(completion_model.as_str())
+    };
+
     let prompt_style = parse_prompt_style(&nes_prompt_style);
 
     let endpoint = parse_completion_endpoint(&completion_endpoint);
@@ -190,6 +198,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     info!(
         base_url = %base_url,
         model = %model,
+        completion_model = ?completion_model_opt,
         delta_count = deltas.len(),
         filepath = %cursor_filepath,
         line = cursor_line,
@@ -204,7 +213,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         &base_url,
         api_key_opt,
         &model,
-        None::<&str>,
+        completion_model_opt,
     ));
     let nes_cfg = NesConfig {
         prompt_style,

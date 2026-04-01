@@ -74,7 +74,7 @@ export class OxideConfig {
 	get provider(): ProviderConfig {
 		const baseUrl = this.config.get<string>(
 			"provider.baseUrl",
-			"http://localhost:11434/v1",
+			"http://localhost:11434",
 		);
 		const apiKey = this.config.get<string>("provider.apiKey", "") || undefined;
 		const model = this.config.get<string>("provider.model", "qwen2.5-coder:7b");
