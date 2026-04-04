@@ -139,6 +139,7 @@ export class ApiClient {
 				documentText,
 				language,
 				originalContent,
+				config.calibrationLogDir,
 			);
 
 			if (!hint) {

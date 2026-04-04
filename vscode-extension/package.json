@@ -173,6 +173,11 @@
 					"default": "completions",
 					"description": "HTTP endpoint type for inference requests"
 				},
+				"oxidecode.calibrationLogDir": {
+					"type": "string",
+					"default": "",
+					"description": "When set, NES predictions are logged as JSONL files to this directory for calibration. Leave empty to disable."
+				},
 				"oxidecode.provider.baseUrl": {
 					"type": "string",
 					"default": "http://localhost:11434/v1",

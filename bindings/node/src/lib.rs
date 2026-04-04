@@ -122,6 +122,9 @@ pub struct JsNesConfig {
     /// Which NES prompt style to use: "generic" | "zeta1" | "zeta2" | "sweep".
     /// Defaults to "generic" when absent or unrecognised.
     pub prompt_style: Option<String>,
+    /// When set, every NES prediction is appended as JSONL to this directory.
+    /// Pass `null`/`undefined` to disable.
+    pub calibration_log_dir: Option<String>,
 }
 
 #[napi(object)]
@@ -189,6 +192,7 @@ pub async fn predict_next_edit(
     let nes_cfg = NesConfig {
         prompt_style,
         completion_endpoint: endpoint,
+        calibration_log_dir: nes_config.calibration_log_dir,
         ..NesConfig::default()
     };
     let engine = NesEngine::new(provider, nes_cfg);

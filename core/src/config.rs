@@ -129,6 +129,11 @@ pub struct NesConfig {
     /// Has no effect for `Zeta1` / `Zeta2` / `Sweep` styles, which always use
     /// `/v1/completions` because they rely on FIM special tokens.
     pub completion_endpoint: CompletionEndpoint,
+    /// When set, every NES prediction is appended as a JSONL line to a file in
+    /// this directory.  The filename is `nes_calibration_<YYYYMMDD>.jsonl`.
+    /// Pass `None` (or omit) to disable calibration logging.
+    #[serde(default)]
+    pub calibration_log_dir: Option<String>,
 }
 
 impl Default for NesConfig {
@@ -139,6 +144,7 @@ impl Default for NesConfig {
             context_tokens: 2048,
             prompt_style: NesPromptStyle::Generic,
             completion_endpoint: CompletionEndpoint::Completions,
+            calibration_log_dir: None,
         }
     }
 }

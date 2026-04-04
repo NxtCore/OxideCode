@@ -24,6 +24,8 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
         var nesPromptStyle: String = "sweep",
         /** "completions" → /v1/completions (default); "chat_completions" → /v1/chat/completions */
         var completionEndpoint: String = "completions",
+        /** When non-empty, NES predictions are logged as JSONL to this directory. */
+        var calibrationLogDir: String = "",
     )
 
     private var state = State()
@@ -71,6 +73,10 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
     var completionEndpoint: String
         get() = state.completionEndpoint
         set(v) { state = state.copy(completionEndpoint = v) }
+
+    var calibrationLogDir: String
+        get() = state.calibrationLogDir
+        set(v) { state = state.copy(calibrationLogDir = v) }
 
     fun isAutocompleteSnoozed(now: Long = System.currentTimeMillis()): Boolean =
         autocompleteSnoozeUntil > now

@@ -46,6 +46,7 @@ export interface NativeCompletionContext {
  */
 export interface NativeNesConfig {
 	promptStyle: string | undefined;
+	calibrationLogDir: string | undefined;
 }
 
 /**
@@ -296,6 +297,7 @@ export async function nativePredictNextEdit(
 	fileContent: string,
 	language: string,
 	originalFileContent: string | undefined,
+	calibrationLogDir?: string,
 ): Promise<NativeNesHint | null> {
 	const mod = tryLoadNativeModule();
 	if (!mod) {
@@ -305,6 +307,7 @@ export async function nativePredictNextEdit(
 	const providerConfig = toNativeProviderConfig(provider, completionEndpoint);
 	const nesConfig: NativeNesConfig = {
 		promptStyle: toNativePromptStyle(promptStyle),
+		calibrationLogDir,
 	};
 
 	try {

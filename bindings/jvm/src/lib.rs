@@ -38,7 +38,7 @@ fn parse_prompt_style(s: &str) -> NesPromptStyle {
 
 /// Initialise the tracing subscriber once for JNI. Call from the Java side early
 /// (for example when the plugin / extension starts) to enable debug logging.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_oxidecode_CoreBridge_initLogging(mut _env: JNIEnv, _class: JClass) {
     // Ignore errors from try_init so that repeated calls don't panic.
     let _ = tracing_subscriber::fmt()
@@ -50,7 +50,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_initLogging(mut _env: JNIEn
 // ─── Completion ──────────────────────────────────────────────────────────────
 
 /// `OxideCore.getCompletion(baseUrl, apiKey, model, completionModel, prefix, suffix, language, filepath, completionEndpoint, promptStyle) -> String`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
     mut env: JNIEnv,
     _class: JClass,
@@ -141,8 +141,8 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
 
 // ─── NES ─────────────────────────────────────────────────────────────────────
 
-/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, completionModel, nesPromptStyle, deltasJson, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint, originalFileContent) -> String (JSON NesHint)`
-#[no_mangle]
+/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, completionModel, nesPromptStyle, deltasJson, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint, originalFileContent, calibrationLogDir) -> String (JSON NesHint)`
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     mut env: JNIEnv,
     _class: JClass,
@@ -159,6 +159,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     language: JString,
     completion_endpoint: JString,
     original_file_content: JString,
+    calibration_log_dir: JString,
 ) -> jstring {
     let base_url: String = env.get_string(&base_url).unwrap().into();
     let api_key: String = env.get_string(&api_key).unwrap().into();
@@ -171,11 +172,18 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     let language: String = env.get_string(&language).unwrap().into();
     let completion_endpoint: String = env.get_string(&completion_endpoint).unwrap().into();
     let original_file_content: String = env.get_string(&original_file_content).unwrap().into();
+    let calibration_log_dir: String = env.get_string(&calibration_log_dir).unwrap().into();
 
     let original_file_content_opt: Option<&str> = if original_file_content.is_empty() {
         None
     } else {
         Some(original_file_content.as_str())
+    };
+
+    let calibration_log_dir_opt: Option<String> = if calibration_log_dir.is_empty() {
+        None
+    } else {
+        Some(calibration_log_dir)
     };
 
     let api_key_opt = if api_key.is_empty() {
@@ -218,6 +226,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     let nes_cfg = NesConfig {
         prompt_style,
         completion_endpoint: endpoint,
+        calibration_log_dir: calibration_log_dir_opt,
         ..NesConfig::default()
     };
     let engine = NesEngine::new(provider, nes_cfg);

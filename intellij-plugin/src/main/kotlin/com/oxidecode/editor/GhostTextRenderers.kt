@@ -183,7 +183,8 @@ internal class BlockGhostTextRenderer(
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val metrics = inlay.editor.contentComponent.getFontMetrics(font(inlay))
-        val widest = lines.maxOfOrNull(metrics::stringWidth) ?: 0
+        val tabSize = inlay.editor.settings.getTabSize(inlay.editor.project)
+        val widest = lines.maxOfOrNull { metrics.stringWidth(expandTabs(it, tabSize)) } ?: 0
         val padding = if (highlighted) HIGHLIGHT_HORIZONTAL_PADDING else HORIZONTAL_PADDING
         return (widest + padding).coerceAtLeast(1)
     }
@@ -202,6 +203,7 @@ internal class BlockGhostTextRenderer(
         val metrics = g2.getFontMetrics(g2.font)
         val lineHeight = inlay.editor.lineHeight
         val padding = if (highlighted) HIGHLIGHT_HORIZONTAL_PADDING else HORIZONTAL_PADDING
+        val tabSize = inlay.editor.settings.getTabSize(inlay.editor.project)
 
         if (highlighted) {
             g2.color = HIGHLIGHT_BACKGROUND
@@ -220,7 +222,7 @@ internal class BlockGhostTextRenderer(
 
         for ((index, line) in lines.withIndex()) {
             val baseline = targetRegion.y + VERTICAL_PADDING / 2 + ((index + 1) * lineHeight) - metrics.descent
-            g2.drawString(line, targetRegion.x + padding / 2, baseline)
+            g2.drawString(expandTabs(line, tabSize), targetRegion.x + padding / 2, baseline)
         }
 
         g2.dispose()
@@ -237,6 +239,25 @@ internal class BlockGhostTextRenderer(
         val HIGHLIGHT_HORIZONTAL_PADDING = JBUI.scale(10)
         val HIGHLIGHT_BACKGROUND = JBColor(Color(0xD9F2E3), Color(0x234233))
         val HIGHLIGHT_FOREGROUND = JBColor(Color(0x1F5F3F), Color(0xA7F3C1))
+
+        /**
+         * Expands tab characters to spaces honouring tab-stop alignment, since
+         * Java2D's drawString() renders '\t' as a near-zero-width glyph rather
+         * than advancing to the next tab stop.
+         */
+        fun expandTabs(line: String, tabSize: Int): String {
+            if (!line.contains('\t')) return line
+            val sb = StringBuilder(line.length + tabSize)
+            for (ch in line) {
+                if (ch == '\t') {
+                    val spaces = tabSize - (sb.length % tabSize)
+                    repeat(spaces) { sb.append(' ') }
+                } else {
+                    sb.append(ch)
+                }
+            }
+            return sb.toString()
+        }
     }
 }
 

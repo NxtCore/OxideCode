@@ -103,6 +103,10 @@ export class OxideConfig {
 		return this.config.get<number>("localPort", 8081);
 	}
 
+	get calibrationLogDir(): string | undefined {
+		return this.config.get<string>("calibrationLogDir", "") || undefined;
+	}
+
 	isAutocompleteSnoozed(now = Date.now()): boolean {
 		const snoozeUntil = this.autocompleteSnoozeUntil;
 		return snoozeUntil > now;

@@ -1,6 +1,8 @@
 use futures_util::StreamExt;
 use std::ops::Range;
 use std::collections::VecDeque;
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -313,6 +315,155 @@ const NES_GENERIC_MAX_TOKENS: u32 = 256;
 /// Sweep uses a ±5-line code block → at most ~10 lines × ~20 tokens/line.
 const NES_SWEEP_MAX_TOKENS: u32 = 200;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CalibrationEntry {
+    timestamp_ms: u64,
+    prompt_style: String,
+    prompt: String,
+    raw_response: Option<String>,
+    parsed_hint: Option<CalibrationHint>,
+    recent_edits: Vec<CalibrationEdit>,
+    cursor_filepath: String,
+    cursor_line: u32,
+    cursor_col: u32,
+    file_content: String,
+    original_file_content: Option<String>,
+    language: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CalibrationEdit {
+    filepath: String,
+    start_line: u32,
+    start_col: u32,
+    removed: String,
+    inserted: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CalibrationHint {
+    filepath: String,
+    line: u32,
+    col: u32,
+    replacement: String,
+    remove_start_line: Option<u32>,
+    remove_start_col: Option<u32>,
+    remove_end_line: Option<u32>,
+    remove_end_col: Option<u32>,
+    confidence: Option<f32>,
+}
+
+fn calibration_log(
+    dir: &str,
+    prompt_style: &str,
+    prompt: &str,
+    raw_response: Option<&str>,
+    hint: Option<&NesHint>,
+    recent_edits: &[EditDelta],
+    cursor_filepath: &str,
+    cursor_line: u32,
+    cursor_col: u32,
+    file_content: &str,
+    original_file_content: Option<&str>,
+    language: &str,
+) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let cal_edits: Vec<CalibrationEdit> = recent_edits
+        .iter()
+        .map(|d| CalibrationEdit {
+            filepath: d.filepath.clone(),
+            start_line: d.start_line,
+            start_col: d.start_col,
+            removed: d.removed.clone(),
+            inserted: d.inserted.clone(),
+        })
+        .collect();
+
+    let cal_hint = hint.map(|h| {
+        let (sl, sc, el, ec) = h
+            .selection_to_remove
+            .as_ref()
+            .map(|r| (Some(r.start_line), Some(r.start_col), Some(r.end_line), Some(r.end_col)))
+            .unwrap_or((None, None, None, None));
+        CalibrationHint {
+            filepath: h.position.filepath.clone(),
+            line: h.position.line,
+            col: h.position.col,
+            replacement: h.replacement.clone(),
+            remove_start_line: sl,
+            remove_start_col: sc,
+            remove_end_line: el,
+            remove_end_col: ec,
+            confidence: h.confidence,
+        }
+    });
+
+    let entry = CalibrationEntry {
+        timestamp_ms: now_ms,
+        prompt_style: prompt_style.to_string(),
+        prompt: prompt.to_string(),
+        raw_response: raw_response.map(|s| s.to_string()),
+        parsed_hint: cal_hint,
+        recent_edits: cal_edits,
+        cursor_filepath: cursor_filepath.to_string(),
+        cursor_line,
+        cursor_col,
+        file_content: file_content.to_string(),
+        original_file_content: original_file_content.map(|s| s.to_string()),
+        language: language.to_string(),
+    };
+
+    let line = match serde_json::to_string(&entry) {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("calibration: failed to serialise entry: {e}");
+            return;
+        }
+    };
+
+    let date = {
+        let secs = now_ms / 1000;
+        let days = secs / 86400;
+        let y = 1970 + (days * 400 + 491) / 146097;
+        let mut remaining = days - ((y - 1970) * 365 + (y - 1970 + 1) / 4 - (y - 1970 + 1) / 100 + (y - 1601) / 400);
+        let md = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mut m = 0;
+        for (i, &d_in_m) in md.iter().enumerate() {
+            let d_in_m = d_in_m + if i == 1 && (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) { 1 } else { 0 };
+            if remaining < d_in_m {
+                m = i + 1;
+                remaining += 1;
+                break;
+            }
+            remaining -= d_in_m;
+        }
+        format!("{y}{m:02}{remaining:02}")
+    };
+
+    let filename = format!("nes_calibration_{date}.jsonl");
+    let path = PathBuf::from(dir).join(&filename);
+
+    if let Err(e) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| {
+            writeln!(f, "{line}")
+        })
+    {
+        warn!("calibration: failed to write to {}: {e}", path.display());
+    } else {
+        debug!("calibration: logged entry to {}", path.display());
+    }
+}
+
 /// The NES engine accumulates edit history and, on request, asks the
 /// provider to predict the next edit.
 ///
@@ -322,13 +473,16 @@ pub struct NesEngine {
     provider: Arc<dyn ProviderDyn>,
     config: NesConfig,
     history: Mutex<VecDeque<EditDelta>>,
+    calibration_log_dir: Option<String>,
 }
 
 impl NesEngine {
     pub fn new(provider: Arc<dyn ProviderDyn>, config: NesConfig) -> Self {
+        let calibration_log_dir = config.calibration_log_dir.clone();
         Self {
             provider,
             history: Mutex::new(VecDeque::new()),
+            calibration_log_dir,
             config,
         }
     }
@@ -655,19 +809,16 @@ impl NesEngine {
         );
         debug!("raw prompt" = %prompt);
 
-        // Sweep uses a Qwen 2.5 Coder base model — raw text completion,
-        // no chat template.
         let stop_tokens: Vec<String> =
             sweep::STOP_TOKENS.iter().map(|s| s.to_string()).collect();
         let raw = self
-            .run_completion_raw(prompt, NES_SWEEP_MAX_TOKENS, stop_tokens, cancel)
-            .await?;
-        debug!(raw_len = raw.len(), raw = %raw, "NES raw response received (sweep)");
+            .run_completion_raw(prompt.clone(), NES_SWEEP_MAX_TOKENS, stop_tokens, cancel)
+            .await;
+        debug!(raw_len = raw.as_ref().map(|r| r.len()).unwrap_or(0), raw = ?raw, "NES raw response received (sweep)");
 
+        let raw = raw?;
         let new_content = parse_sweep_response(&raw, &ctx)?;
 
-        // Reuse the Zeta region→hint logic: construct a ZetaEditableRegion
-        // from the Sweep code block context.
         let cursor_byte_offset_in_block = ctx.prefill.len();
         let region = ZetaEditableRegion {
             start_line: ctx.block_start_line,
@@ -676,7 +827,30 @@ impl NesEngine {
             original_content: ctx.original_code_block.clone(),
             cursor_byte_offset: cursor_byte_offset_in_block,
         };
-        self.sweep_region_to_hint(region, new_content, cursor_filepath)
+        let hint = self.sweep_region_to_hint(region, new_content, cursor_filepath);
+
+        if let Some(ref dir) = self.calibration_log_dir && hint.is_some() {
+            let hint_clone = hint.clone();
+            calibration_log(
+                dir,
+                "sweep",
+                &prompt,
+                Some(&raw),
+                if let Some(ref hint) = hint_clone {
+                    Some(&hint)
+                } else {
+                    None
+                },
+                recent_edits,
+                cursor_filepath,
+                cursor_line,
+                cursor_col,
+                file_content,
+                Some(original_file_content),
+                "",
+            );
+        }
+        hint
     }
 
     // ── Shared streaming helpers ───────────────────────────────────────────

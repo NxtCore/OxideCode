@@ -58,6 +58,7 @@ class CoreBridge {
      * @param completionEndpoint  Which HTTP endpoint to use for Generic NES style:
      *   "completions" (default) or "chat_completions".
      * @param originalFileContent Pre-edit file snapshot for Sweep prompt (empty string if unused).
+     * @param calibrationLogDir   Directory to write calibration JSONL files (empty string to disable).
      * @return                    JSON-encoded NesHint, or empty string if no prediction.
      */
     external fun predictNextEdit(
@@ -74,6 +75,7 @@ class CoreBridge {
         language: String,
         completionEndpoint: String,
         originalFileContent: String,
+        calibrationLogDir: String,
     ): String
 
     companion object {

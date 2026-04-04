@@ -12,6 +12,7 @@ import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.openapi.editor.event.SelectionEvent
 import com.intellij.openapi.editor.event.SelectionListener
+import com.intellij.openapi.diagnostic.Logger
 import com.oxidecode.CoreBridge
 import com.oxidecode.absoluteUnixPath
 import com.oxidecode.detectLanguageId
@@ -92,6 +93,10 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     private val tracker get() = service<NesSessionTracker>()
     private var debounceJob: Job? = null
 
+    companion object {
+        private val LOG = Logger.getInstance(NesDocumentListener::class.java)
+    }
+
     override fun documentChanged(event: DocumentEvent) {
         if (!settings.nesEnabled) return
 
@@ -137,6 +142,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 buildRequestContext()
             } ?: return@launch
 
+            val startTime = System.currentTimeMillis()
             val result = runCatching {
                 bridge.predictNextEdit(
                     baseUrl = settings.baseUrl,
@@ -152,8 +158,11 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     language = requestContext.language,
                     completionEndpoint = settings.completionEndpoint,
                     originalFileContent = requestContext.originalContent,
+                    calibrationLogDir = settings.calibrationLogDir,
                 )
             }.getOrNull()
+            val elapsed = System.currentTimeMillis() - startTime
+            LOG.debug("NES predictNextEdit completed in ${elapsed}ms")
 
             if (!result.isNullOrBlank()) {
                 val hint = runCatching { Json.decodeFromString<NesHint>(result) }.getOrNull()
