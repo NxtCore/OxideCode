@@ -69,6 +69,7 @@ impl CompletionContext {
         excerpt.push_str("\n```");
 
         let mut prompt = String::new();
+        
         prompt.push_str(zeta1::INSTRUCTION_HEADER);
         prompt.push_str("No prior edits. Complete the excerpt at the cursor.\n");
         prompt.push_str(zeta1::EXCERPT_HEADER);

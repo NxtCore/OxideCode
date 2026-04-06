@@ -26,6 +26,7 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
         var completionEndpoint: String = "completions",
         /** When non-empty, NES predictions are logged as JSONL to this directory. */
         var calibrationLogDir: String = "",
+        var calibrationEnabled: Boolean = false,
     )
 
     private var state = State()

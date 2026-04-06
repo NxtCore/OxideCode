@@ -89,6 +89,7 @@ pub async fn get_completion(
         &provider_config.model,
         provider_config.completion_model.as_deref(),
     ));
+    
 
     let autocomplete_cfg = AutocompleteConfig {
         completion_endpoint: endpoint,

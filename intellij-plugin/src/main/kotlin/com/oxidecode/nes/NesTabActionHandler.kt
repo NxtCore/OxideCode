@@ -37,4 +37,5 @@ class NesTabActionHandler(private val originalHandler: EditorActionHandler) : Ed
         caret: Caret,
         dataContext: DataContext,
     ): Boolean = true
+
 }

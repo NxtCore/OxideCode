@@ -828,28 +828,6 @@ impl NesEngine {
             cursor_byte_offset: cursor_byte_offset_in_block,
         };
         let hint = self.sweep_region_to_hint(region, new_content, cursor_filepath);
-
-        if let Some(ref dir) = self.calibration_log_dir && hint.is_some() {
-            let hint_clone = hint.clone();
-            calibration_log(
-                dir,
-                "sweep",
-                &prompt,
-                Some(&raw),
-                if let Some(ref hint) = hint_clone {
-                    Some(&hint)
-                } else {
-                    None
-                },
-                recent_edits,
-                cursor_filepath,
-                cursor_line,
-                cursor_col,
-                file_content,
-                Some(original_file_content),
-                "",
-            );
-        }
         hint
     }
 

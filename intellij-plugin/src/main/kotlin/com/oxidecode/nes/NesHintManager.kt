@@ -151,6 +151,7 @@ object NesHintManager {
             )
         )
 
+
         activeEditor = editor
         activePreview = preview
         activeHint = hint
