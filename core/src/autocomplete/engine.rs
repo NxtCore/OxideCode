@@ -152,6 +152,7 @@ impl CompletionEngine {
             .provider
             .complete_dyn(prompt, max_tokens, stop_tokens, cancel.clone());
         let mut full = String::new();
+        let mut had_error = false;
 
         loop {
             tokio::select! {
@@ -164,6 +165,7 @@ impl CompletionEngine {
                         Some(Ok(_)) => {}
                         Some(Err(e)) => {
                             warn!("completion stream error: {e}");
+                            had_error = true;
                             break;
                         }
                         None => break,
@@ -176,7 +178,14 @@ impl CompletionEngine {
             }
         }
 
-        if full.is_empty() { None } else { Some(full) }
+        if had_error || full.is_empty() {
+            if had_error {
+                warn!("completion: discarding partial response due to stream error (received {} bytes)", full.len());
+            }
+            None
+        } else {
+            Some(full)
+        }
     }
 
     async fn stream_chat(
@@ -187,6 +196,7 @@ impl CompletionEngine {
     ) -> Option<String> {
         let mut stream = self.provider.chat_dyn(messages, cancel.clone());
         let mut full = String::new();
+        let mut had_error = false;
 
         loop {
             tokio::select! {
@@ -199,6 +209,7 @@ impl CompletionEngine {
                         Some(Ok(_)) => {}
                         Some(Err(e)) => {
                             warn!("completion stream error: {e}");
+                            had_error = true;
                             break;
                         }
                         None => break,
@@ -211,7 +222,14 @@ impl CompletionEngine {
             }
         }
 
-        if full.is_empty() { None } else { Some(full) }
+        if had_error || full.is_empty() {
+            if had_error {
+                warn!("completion chat: discarding partial response due to stream error (received {} bytes)", full.len());
+            }
+            None
+        } else {
+            Some(full)
+        }
     }
 }
 

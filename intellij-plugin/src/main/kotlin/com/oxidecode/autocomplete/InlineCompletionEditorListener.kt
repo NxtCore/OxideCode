@@ -72,12 +72,17 @@ private class InlineCompletionDocumentListener(
         InlineCompletionManager.dismiss(editor)
 
         if (!settings.autocompleteEnabled) return
+        if (settings.isAutocompleteSnoozed()) return
 
         val project = editor.project ?: return
         val document = editor.document
+        if (isDocumentTooLarge(document)) return
+
         val offset = editor.caretModel.offset.coerceIn(0, document.textLength)
-        val text = document.text
         val filepath = absoluteUnixPath(document) ?: return
+        if (settings.shouldExcludeFromAutocomplete(filepath)) return
+
+        val text = document.text
         val language = detectLanguageId(project, document)
         val prefix = text.substring(0, offset)
         val suffix = text.substring(offset)

@@ -50,12 +50,8 @@
             order="first"/>
 
         <!-- When the IntelliSense lookup popup is open, Tab triggers
-             EditorChooseLookupItem instead of EditorTab.  Wrap those
-             handlers so OxideCode completions win when a ghost-text
-             suggestion is visible; otherwise delegate to original. -->
-        <editorActionHandler action="EditorChooseLookupItem"
-            implementationClass="com.oxidecode.actions.LookupTabHandler"
-            order="first"/>
+             EditorChooseLookupItemReplace. Wrap only the Tab-specific
+             lookup action so Enter keeps normal IntelliSense behavior. -->
         <editorActionHandler action="EditorChooseLookupItemReplace"
             implementationClass="com.oxidecode.actions.LookupTabReplaceHandler"
             order="first"/>

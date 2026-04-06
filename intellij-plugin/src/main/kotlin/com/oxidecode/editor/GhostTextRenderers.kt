@@ -50,7 +50,7 @@ internal class NesOverlayTextRenderer(
 ) : EditorCustomElementRenderer {
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val metrics = inlay.editor.contentComponent.getFontMetrics(font(inlay))
-        return LEADING_GAP + segments.sumOf { segmentWidth(it, metrics) }.coerceAtLeast(1)
+        return LEADING_GAP + (BOX_H_PAD * 2) + segments.sumOf { segmentWidth(it, metrics) }.coerceAtLeast(1)
     }
 
     override fun paint(
@@ -66,17 +66,23 @@ internal class NesOverlayTextRenderer(
         val metrics = g2.getFontMetrics(g2.font)
         val baseline = targetRegion.y + targetRegion.height - metrics.descent
 
-        // Erase the background so we paint cleanly over any existing text.
-        g2.color = inlay.editor.colorsScheme.defaultBackground
-        g2.fillRect(
-            targetRegion.x,
-            targetRegion.y,
-            targetRegion.width.coerceAtLeast(1),
-            targetRegion.height.coerceAtLeast(1),
-        )
+        val bgWidth = targetRegion.width.coerceAtLeast(1)
+        val bgHeight = (targetRegion.height - JBUI.scale(2)).coerceAtLeast(1)
+        val bgY = targetRegion.y + JBUI.scale(1)
 
-        // Start after the leading gap.
-        var x = targetRegion.x + LEADING_GAP
+        g2.color = OVERLAY_BACKGROUND
+        g2.fillRoundRect(
+            targetRegion.x,
+            bgY,
+            bgWidth,
+            bgHeight,
+            OVERLAY_ARC,
+            OVERLAY_ARC,
+        )
+        g2.color = OVERLAY_BORDER
+        g2.drawRoundRect(targetRegion.x, bgY, bgWidth - 1, bgHeight - 1, OVERLAY_ARC, OVERLAY_ARC)
+
+        var x = targetRegion.x + LEADING_GAP + BOX_H_PAD
 
         for (segment in segments) {
             if (segment.text.isEmpty()) continue
@@ -113,9 +119,13 @@ internal class NesOverlayTextRenderer(
     private companion object {
         /** Small gap between the line-end and the start of the overlay. */
         val LEADING_GAP = JBUI.scale(16)
+        val BOX_H_PAD = JBUI.scale(6)
         val SEGMENT_H_PAD = JBUI.scale(4)
         val PILL_ARC = JBUI.scale(8)
-        val GHOST_FOREGROUND = JBColor(Color(0x7A7D85), Color(0x7F848E))
+        val OVERLAY_ARC = JBUI.scale(8)
+        val OVERLAY_BACKGROUND = JBColor(Color(0xEEF3F8), Color(0x2B313A))
+        val OVERLAY_BORDER = JBColor(Color(0xCCD8E6), Color(0x515D70))
+        val GHOST_FOREGROUND = JBColor(Color(0x59606B), Color(0xB0B7C3))
         val HIGHLIGHT_BACKGROUND = JBColor(Color(0xD9F2E3), Color(0x234233))
         val HIGHLIGHT_FOREGROUND = JBColor(Color(0x1F5F3F), Color(0xA7F3C1))
     }
@@ -300,14 +310,12 @@ internal class NesMultilineOverlayRenderer(
 
         // Paint a unified rounded-rect background spanning all lines.
         val totalHeight = lineHeight * lineSegments.size
-        val bgColor = inlay.editor.colorsScheme.defaultBackground
-        g2.color = bgColor
+        g2.color = OVERLAY_BACKGROUND
         val bgWidth = calcWidthInPixels(inlay).coerceAtLeast(1)
         g2.fillRoundRect(targetRegion.x, targetRegion.y, bgWidth, totalHeight, JBUI.scale(4), JBUI.scale(4))
 
         // Draw a subtle border around the whole block.
-        val borderColor = JBColor(Color(110, 110, 110, 90), Color(110, 110, 110, 90))
-        g2.color = borderColor
+        g2.color = OVERLAY_BORDER
         g2.drawRoundRect(targetRegion.x, targetRegion.y, bgWidth - 1, totalHeight - 1, JBUI.scale(4), JBUI.scale(4))
 
         // Render each line.
@@ -351,7 +359,9 @@ internal class NesMultilineOverlayRenderer(
         val LEADING_GAP = JBUI.scale(16)
         val SEGMENT_H_PAD = JBUI.scale(4)
         val PILL_ARC = JBUI.scale(8)
-        val GHOST_FOREGROUND = JBColor(Color(0x7A7D85), Color(0x7F848E))
+        val OVERLAY_BACKGROUND = JBColor(Color(0xEEF3F8), Color(0x2B313A))
+        val OVERLAY_BORDER = JBColor(Color(0xCCD8E6), Color(0x515D70))
+        val GHOST_FOREGROUND = JBColor(Color(0x59606B), Color(0xB0B7C3))
         val HIGHLIGHT_BACKGROUND = JBColor(Color(0xD9F2E3), Color(0x234233))
         val HIGHLIGHT_FOREGROUND = JBColor(Color(0x1F5F3F), Color(0xA7F3C1))
     }

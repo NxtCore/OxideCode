@@ -15,6 +15,8 @@ import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.diagnostic.Logger
 import com.oxidecode.CoreBridge
 import com.oxidecode.absoluteUnixPath
+import com.oxidecode.autocomplete.isDocumentTooLarge
+import com.oxidecode.autocomplete.isTextTooLarge
 import com.oxidecode.detectLanguageId
 import com.oxidecode.settings.OxideCodeSettings
 import java.awt.KeyboardFocusManager
@@ -180,9 +182,11 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         val project = editor.project ?: return null
         val filepath = absoluteUnixPath(editor.document) ?: return null
         if (getSuppressionReason(project, filepath) != null) return null
+        if (isDocumentTooLarge(editor.document)) return null
 
         val content = editor.document.text
         val originalContent = tracker.getOriginalContent(filepath) ?: content
+        if (isTextTooLarge(originalContent)) return null
         if (content == originalContent) return null
 
         val cursor = editor.caretModel.logicalPosition
@@ -199,6 +203,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     private fun getSuppressionReason(project: com.intellij.openapi.project.Project, filepath: String): String? {
         if (settings.isAutocompleteSnoozed()) return "snoozed"
         if (settings.shouldExcludeFromAutocomplete(filepath)) return "excluded file"
+        if (isDocumentTooLarge(editor.document)) return "file too large"
         if (FileEditorManager.getInstance(project).selectedTextEditor != editor) return "inactive document"
 
         val window = SwingUtilities.getWindowAncestor(editor.contentComponent)

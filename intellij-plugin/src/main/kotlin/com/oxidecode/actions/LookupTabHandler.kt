@@ -7,7 +7,7 @@ import com.intellij.openapi.editor.actionSystem.EditorActionHandler
 import com.oxidecode.autocomplete.InlineCompletionManager
 import com.oxidecode.nes.NesHintManager
 
-abstract class OxideLookupHandler(private val original: EditorActionHandler) : EditorActionHandler() {
+class LookupTabReplaceHandler(private val original: EditorActionHandler) : EditorActionHandler() {
 
     override fun doExecute(editor: Editor, caret: Caret?, dataContext: DataContext) {
         when {
@@ -25,7 +25,3 @@ abstract class OxideLookupHandler(private val original: EditorActionHandler) : E
             InlineCompletionManager.isShowing(editor) ||
             original.isEnabled(editor, caret, dataContext)
 }
-
-class LookupTabHandler(original: EditorActionHandler) : OxideLookupHandler(original)
-
-class LookupTabReplaceHandler(original: EditorActionHandler) : OxideLookupHandler(original)

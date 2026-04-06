@@ -23,13 +23,17 @@ class OxideCompletionContributor : CompletionContributor() {
     ) {
         val settings = OxideCodeSettings.instance
         if (!settings.autocompleteEnabled) return
+        if (settings.isAutocompleteSnoozed()) return
 
         val editor = parameters.editor
         val document = editor.document
+        if (isDocumentTooLarge(document)) return
+
         val offset = parameters.offset
         val project = parameters.originalFile.project
 
         val filepath = absoluteUnixPath(document) ?: return
+        if (settings.shouldExcludeFromAutocomplete(filepath)) return
 
         val text = document.text
         val prefix = text.substring(0, offset)
