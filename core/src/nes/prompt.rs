@@ -1115,25 +1115,17 @@ fn sweep_format_changes_and_prev_section(
             continue;
         }
 
-        // 1-indexed line numbers matching Sweep's convention.  Line range
-        // spans the "new" (inserted) side when available, otherwise the
-        // "old" (removed) side.
-        let start_line = delta.start_line + 1;
-        let line_count = if delta.inserted.is_empty() {
-            delta.removed.lines().count()
-        } else {
-            delta.inserted.lines().count()
-        };
-        let end_line = start_line + line_count.saturating_sub(1) as u32;
-
         let old_code = delta.removed.trim_end_matches('\n');
         let new_code = delta.inserted.trim_end_matches('\n');
 
         use std::fmt::Write;
         let _ = write!(
             result,
-            "File: {}:{}:{}\noriginal:\n{}\nupdated:\n{}\n",
-            delta.filepath, start_line, end_line, old_code, new_code,
+            "{}{}.diff\noriginal:\n{}\nupdated:\n{}\n",
+            sweep::FILE_SEP,       // <|file_sep|>
+            delta.filepath,        // {changed_file_1}.diff
+            old_code,
+            new_code,
         );
     }
 

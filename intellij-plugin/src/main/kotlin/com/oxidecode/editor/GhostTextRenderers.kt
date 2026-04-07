@@ -6,6 +6,7 @@ import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import java.awt.AlphaComposite
 import java.awt.Color
 import java.awt.Font
 import java.awt.FontMetrics
@@ -302,6 +303,8 @@ internal class NesMultilineOverlayRenderer(
     ) {
         if (lineSegments.isEmpty()) return
         val g2 = g.create() as Graphics2D
+        val alpha = 1.0f
+        g2.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha)
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
         g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
         g2.font = font(inlay)
