@@ -17,8 +17,6 @@ import com.oxidecode.editor.BlockGhostTextRenderer
 import com.oxidecode.editor.CursorLineHintRenderer
 import com.oxidecode.editor.GhostTextDisplayParts
 import com.oxidecode.editor.InlineGhostTextRenderer
-import com.oxidecode.editor.NesExtraLinesHintRenderer
-import com.oxidecode.editor.NesMultilineOverlayRenderer
 import com.oxidecode.editor.NesOverlaySegment
 import com.oxidecode.editor.NesOverlayTextRenderer
 import com.oxidecode.editor.TabJumpHintInlayRenderer
@@ -320,32 +318,16 @@ object NesHintManager {
         val additionLineIndices = (0 until maxLines)
             .filter { i -> diffs.getOrNull(i)?.diff?.newChanged?.isNotEmpty() == true }
 
-        // Group consecutive addition lines for the "single grouped inlay" approach.
-        val additionGroups = mutableListOf<MutableList<Int>>()
-        for (idx in additionLineIndices) {
-            val last = additionGroups.lastOrNull()
-            if (last == null || last.last() != idx - 1) {
-                additionGroups.add(mutableListOf(idx))
-            } else {
-                last.add(idx)
-            }
-        }
-        val combinedGroupIndices = additionGroups
-            .filter { it.size > 1 }
-            .flatten()
-            .toSet()
-        val renderedLineIndices = mutableSetOf<Int>()
-
         val hasAdditions = additionLineIndices.isNotEmpty()
         val showPreview = hasAdditions
 
         if (!isMultilineInsertion && showPreview) {
-            // Single-line groups — one overlay per changed line.
+            // One overlay per changed line — each inlay paints after its own line's
+            // text, so its paint() can extend left to cover the original characters.
             for (i in 0 until originalLines.size) {
                 val entry = diffs.getOrNull(i) ?: continue
                 val diff = entry.diff ?: continue
                 if (diff.newChanged.isEmpty()) continue
-                if (combinedGroupIndices.contains(i)) continue   // handled as group
 
                 val docLine = editStartLine + i
                 if (docLine >= document.lineCount) continue
@@ -359,35 +341,7 @@ object NesHintManager {
                     true,
                     NesOverlayTextRenderer(segments),
                 )
-                if (inlay != null) {
-                    activeDiffInlays.add(inlay)
-                    renderedLineIndices.add(i)
-                }
-            }
-
-            // Multi-line groups — a single stacked inlay at the first line.
-            for (group in additionGroups) {
-                if (group.size <= 1) continue
-                val firstIdx = group.first()
-                val docLine = editStartLine + firstIdx
-                if (docLine >= document.lineCount) continue
-                val lineEndOffset = document.getLineEndOffset(docLine)
-
-                val lineSegments = group.map { i ->
-                    val entry = diffs.getOrNull(i) ?: return@map emptyList()
-                    buildOverlaySegments(entry.oldLine, entry.newLine)
-                }
-                if (lineSegments.all { it.isEmpty() }) continue
-
-                val inlay = editor.inlayModel.addAfterLineEndElement(
-                    lineEndOffset,
-                    true,
-                    NesMultilineOverlayRenderer(lineSegments),
-                )
-                if (inlay != null) {
-                    activeDiffInlays.add(inlay)
-                    for (i in group) renderedLineIndices.add(i)
-                }
+                if (inlay != null) activeDiffInlays.add(inlay)
             }
         }
 
@@ -397,43 +351,28 @@ object NesHintManager {
                 hint.replacement.dropLast(1) else hint.replacement
             val addedLines = if (addedText.isNotEmpty()) addedText.split('\n') else listOf("")
 
-            val lineSegmentsList = addedLines.map { line ->
-                if (line.isNotEmpty()) listOf(NesOverlaySegment(line, highlighted = true))
-                else emptyList()
-            }
+            // Render each inserted line as its own overlay on the same anchor line.
+            // The first line overlays the existing line; subsequent lines are extra
+            // additions shown as highlighted overlays on consecutive document lines
+            // (or all on the anchor if they don't exist yet — best-effort).
+            for ((lineIndex, line) in addedLines.withIndex()) {
+                val segments = if (line.isNotEmpty())
+                    listOf(NesOverlaySegment(line, highlighted = true))
+                else continue
 
-            val docLine = editStartLine.coerceAtMost(document.lineCount - 1)
-            val lineEndOffset = document.getLineEndOffset(docLine)
+                val docLine = (editStartLine + lineIndex).coerceAtMost(document.lineCount - 1)
+                val lineEndOffset = document.getLineEndOffset(docLine)
 
-            val inlay = editor.inlayModel.addAfterLineEndElement(
-                lineEndOffset,
-                true,
-                NesMultilineOverlayRenderer(lineSegmentsList),
-            )
-            if (inlay != null) {
-                activeDiffInlays.add(inlay)
-                addedLines.indices.forEach { renderedLineIndices.add(it) }
-            }
-        }
-
-        // ── 4. (+N lines) indicator ───────────────────────────────────────────
-        if (!isMultilineInsertion && newLines.size > originalLines.size) {
-            val extraLinesRendered = renderedLineIndices.any { it >= originalLines.size }
-            if (!extraLinesRendered) {
-                val extraCount = newLines.size - originalLines.size
-                val lastOrigDocLine = (editStartLine + originalLines.size - 1)
-                    .coerceAtMost(document.lineCount - 1)
-                val lineEndOffset = document.getLineEndOffset(lastOrigDocLine)
                 val inlay = editor.inlayModel.addAfterLineEndElement(
                     lineEndOffset,
                     true,
-                    NesExtraLinesHintRenderer(extraCount),
+                    NesOverlayTextRenderer(segments),
                 )
                 if (inlay != null) activeDiffInlays.add(inlay)
             }
         }
 
-        // ── 5. Cursor-line hint ───────────────────────────────────────────────
+        // ── 4. Cursor-line hint ───────────────────────────────────────────────
         // Show "→ Edit at line N  [TAB] ✓  [ESC] ✗" on the cursor's current line
         // when the cursor is not on the affected lines (mirrors VS Code HINT_DECORATION_TYPE).
         val isOnAffectedLine = cursorLine in editStartLine..editEndLine
