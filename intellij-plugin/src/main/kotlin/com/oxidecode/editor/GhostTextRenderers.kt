@@ -51,7 +51,7 @@ internal class NesOverlayTextRenderer(
 ) : EditorCustomElementRenderer {
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val metrics = inlay.editor.contentComponent.getFontMetrics(font(inlay))
-        return (BOX_H_PAD * 2) + segments.sumOf { segmentWidth(it, metrics) }.coerceAtLeast(1)
+        return LEADING_GAP + (BOX_H_PAD * 2) + segments.sumOf { segmentWidth(it, metrics) }.coerceAtLeast(1)
     }
 
     override fun paint(
@@ -67,35 +67,23 @@ internal class NesOverlayTextRenderer(
         val metrics = g2.getFontMetrics(g2.font)
         val baseline = targetRegion.y + targetRegion.height - metrics.descent
 
-        // Draw from the start of the line so the overlay covers the original text.
-        // targetRegion.x is in paint/component coordinates; editor.offsetToXY() returns
-        // editor logical coordinates which may have a different origin (e.g. scroll offset).
-        // Compute lineStartX by subtracting the logical distance from line-start to line-end
-        // from targetRegion.x, so we stay in paint coordinate space throughout.
-        val doc = inlay.editor.document
-        val lineNum = doc.getLineNumber(inlay.offset)
-        val lineStartOffset = doc.getLineStartOffset(lineNum)
-        val lineEndOffset = doc.getLineEndOffset(lineNum)
-        val lineStartLogical = inlay.editor.offsetToXY(lineStartOffset).x
-        val lineEndLogical = inlay.editor.offsetToXY(lineEndOffset).x
-        val lineStartX = targetRegion.x - (lineEndLogical - lineStartLogical)
-        val overlayWidth = (targetRegion.x + targetRegion.width - lineStartX).coerceAtLeast(1)
+        val bgWidth = targetRegion.width.coerceAtLeast(1)
         val bgHeight = (targetRegion.height - JBUI.scale(2)).coerceAtLeast(1)
         val bgY = targetRegion.y + JBUI.scale(1)
 
         g2.color = OVERLAY_BACKGROUND
         g2.fillRoundRect(
-            lineStartX,
+            targetRegion.x,
             bgY,
-            overlayWidth,
+            bgWidth,
             bgHeight,
             OVERLAY_ARC,
             OVERLAY_ARC,
         )
         g2.color = OVERLAY_BORDER
-        g2.drawRoundRect(lineStartX, bgY, overlayWidth - 1, bgHeight - 1, OVERLAY_ARC, OVERLAY_ARC)
+        g2.drawRoundRect(targetRegion.x, bgY, bgWidth - 1, bgHeight - 1, OVERLAY_ARC, OVERLAY_ARC)
 
-        var x = lineStartX + BOX_H_PAD
+        var x = targetRegion.x + LEADING_GAP + BOX_H_PAD
 
         for (segment in segments) {
             if (segment.text.isEmpty()) continue
@@ -130,6 +118,8 @@ internal class NesOverlayTextRenderer(
     }
 
     private companion object {
+        /** Small gap between the line-end and the start of the overlay. */
+        val LEADING_GAP = JBUI.scale(16)
         val BOX_H_PAD = JBUI.scale(6)
         val SEGMENT_H_PAD = JBUI.scale(4)
         val PILL_ARC = JBUI.scale(8)
