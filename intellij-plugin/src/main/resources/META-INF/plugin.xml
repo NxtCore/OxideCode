@@ -38,6 +38,9 @@
         <editorFactoryListener
             implementation="com.oxidecode.nes.NesEditorListener"/>
 
+        <postStartupActivity
+            implementation="com.oxidecode.autocomplete.LookupUiStartupActivity"/>
+
         <completion.contributor
             language="any"
             implementationClass="com.oxidecode.autocomplete.OxideCompletionContributor"

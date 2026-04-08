@@ -13,6 +13,7 @@ object InlineCompletionManager {
     private var activeEditor: Editor? = null
     private var activeInlineInlay: Inlay<*>? = null
     private var activeBlockInlay: Inlay<*>? = null
+    private var activeTrailingInlineInlay: Inlay<*>? = null
     private var activeOffset: Int? = null
     private var activeCompletion: String? = null
 
@@ -25,19 +26,24 @@ object InlineCompletionManager {
         val text = completion.takeUnless { it.isBlank() } ?: return
         val safeOffset = offset.coerceIn(0, editor.document.textLength)
         val display = GhostTextDisplayParts.from(text)
+        val renderOffset = (safeOffset + display.startOffsetAdjustment).coerceIn(0, editor.document.textLength)
 
         activeInlineInlay = display.inlineText
             .takeUnless { it.isEmpty() }
-            ?.let { editor.inlayModel.addInlineElement(safeOffset, InlineGhostTextRenderer(it)) }
+            ?.let { editor.inlayModel.addInlineElement(renderOffset, InlineGhostTextRenderer(it, showHint = true)) }
 
         activeBlockInlay = display.blockText
             .takeUnless { it.isEmpty() }
-            ?.let { editor.inlayModel.addBlockElement(safeOffset, true, false, 0, BlockGhostTextRenderer(it)) }
+            ?.let { editor.inlayModel.addBlockElement(renderOffset, true, false, 0, BlockGhostTextRenderer(it)) }
 
-        if (activeInlineInlay == null && activeBlockInlay == null) return
+        activeTrailingInlineInlay = display.trailingInlineText
+            .takeUnless { it.isEmpty() }
+            ?.let { editor.inlayModel.addInlineElement((renderOffset + 1).coerceIn(0, editor.document.textLength), InlineGhostTextRenderer(it)) }
+
+        if (activeInlineInlay == null && activeBlockInlay == null && activeTrailingInlineInlay == null) return
 
         activeEditor = editor
-        activeOffset = safeOffset
+        activeOffset = renderOffset
         activeCompletion = text
     }
 
@@ -59,8 +65,10 @@ object InlineCompletionManager {
 
         activeInlineInlay?.dispose()
         activeBlockInlay?.dispose()
+        activeTrailingInlineInlay?.dispose()
         activeInlineInlay = null
         activeBlockInlay = null
+        activeTrailingInlineInlay = null
         activeOffset = null
         activeCompletion = null
         activeEditor = null

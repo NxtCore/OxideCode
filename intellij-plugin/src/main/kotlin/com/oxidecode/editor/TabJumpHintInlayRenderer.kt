@@ -1,97 +1,99 @@
 package com.oxidecode.editor
 
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.markup.TextAttributes
-import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.GraphicsUtil
-import java.awt.*
+import com.intellij.openapi.keymap.KeymapUtil
+import com.intellij.openapi.util.Disposer
+import com.intellij.ui.JBColor
+import java.awt.Color
+import java.awt.Font
+import java.awt.FontMetrics
+import java.awt.Graphics
+import java.awt.Graphics2D
 import java.awt.Rectangle
 import java.awt.RenderingHints
 
-class TabJumpHintInlayRenderer : EditorCustomElementRenderer {
+class TabJumpHintInlayRenderer(
+    private val editor: Editor,
+    parentDisposable: Disposable,
+) : EditorCustomElementRenderer, Disposable {
+    private val actionText = " to jump here"
 
-    private val hPad = JBUI.scale(6)
-    private val vPad = JBUI.scale(3)
-    private val keycapHPad = JBUI.scale(6)
-    private val gap = JBUI.scale(5)
-    private val arc = JBUI.scale(6)
-
-    private fun getFont(base: Font) = base.deriveFont(Font.BOLD, (base.size - 1).toFloat())
-    private fun getLabelFont(base: Font) = base.deriveFont(Font.PLAIN, (base.size - 1).toFloat())
-
-    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
-        val fm = inlay.editor.component.getFontMetrics(getFont(inlay.editor.colorsScheme.getFont(
-            com.intellij.openapi.editor.colors.EditorFontType.PLAIN)))
-        val labelFm = inlay.editor.component.getFontMetrics(getLabelFont(inlay.editor.colorsScheme.getFont(
-            com.intellij.openapi.editor.colors.EditorFontType.PLAIN)))
-
-        val tabWidth = fm.stringWidth("TAB") + keycapHPad * 2
-        val labelWidth = labelFm.stringWidth("to jump here")
-        return hPad + tabWidth + gap + labelWidth + hPad + JBUI.scale(4)
+    init {
+        Disposer.register(parentDisposable, this)
     }
 
+    override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+        val font = editor.colorsScheme.getFont(EditorFontType.PLAIN)
+        val fontMetrics = editor.contentComponent.getFontMetrics(font)
+        val tabWidth = fontMetrics.stringWidth(tabText())
+        val actionWidth = fontMetrics.stringWidth(actionText)
+        val horizontalPadding = 8
+        val spacing = 4
+        return tabWidth + horizontalPadding * 2 + spacing + actionWidth + 16
+    }
+
+    override fun calcHeightInPixels(inlay: Inlay<*>): Int = editor.lineHeight
+
     override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) {
-        val editor = inlay.editor
         val g2 = g.create() as Graphics2D
-        GraphicsUtil.setupAAPainting(g2)
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB)
-        g2.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
-        val baseFont = editor.colorsScheme.getFont(com.intellij.openapi.editor.colors.EditorFontType.PLAIN)
-        val tabFont = getFont(baseFont)
-        val labelFont = getLabelFont(baseFont)
+        val baseFont = editor.colorsScheme.getFont(EditorFontType.PLAIN)
+        g2.font = baseFont.deriveFont((baseFont.size - 2).toFloat())
+        val fm = g2.getFontMetrics()
+        val tabWidth = fm.stringWidth(tabText())
+        val actionWidth = fm.stringWidth(actionText)
+        val tabHeight = fm.height - 2
+        val tabHorizontalPadding = 4
+        val spacing = 2
+        val py = 4
+        val px = 12
+        val leftMargin = px * 2
+        val totalWidth = tabWidth + tabHorizontalPadding * 2 + spacing + actionWidth
+        val totalHeight = tabHeight + py * 2
+        val startX = targetRegion.x + leftMargin
+        val startY = targetRegion.y + (targetRegion.height - totalHeight) / 2
 
-        val tabFm = g2.getFontMetrics(tabFont)
-        val labelFm = g2.getFontMetrics(labelFont)
+        val backgroundColor = withAlpha(editor.colorsScheme.defaultBackground.brighter(), 0.8f)
+        val borderColor = withAlpha(FOREGROUND, 0.3f)
+        g2.color = backgroundColor
+        g2.fillRoundRect(startX - px, startY, totalWidth + px * 2, totalHeight, 8, 8)
+        g2.color = borderColor
+        g2.drawRoundRect(startX - px, startY, totalWidth + px * 2, totalHeight, 8, 8)
 
-        val lineHeight = targetRegion.height
-        val bgHeight = lineHeight - JBUI.scale(4)
-        val bgY = targetRegion.y + (lineHeight - bgHeight) / 2
+        val tabY = startY + py
+        g2.color = withAlpha(FOREGROUND, 0.1f)
+        g2.fillRoundRect(startX, tabY, tabWidth + tabHorizontalPadding * 2, tabHeight, 4, 4)
 
-        // ── Pill background ──────────────────────────────────────────────
-        val bg = editor.colorsScheme.defaultBackground.darkenBy(0.30f)
-        g2.color = bg
-        g2.fillRoundRect(targetRegion.x, bgY, targetRegion.width - JBUI.scale(2), bgHeight, arc * 2, arc * 2)
+        g2.color = if (JBColor.isBright()) FOREGROUND else withAlpha(FOREGROUND, 0.8f)
+        val baseline = tabY + tabHeight / 2 + fm.ascent / 2 - fm.descent / 2
+        g2.drawString(tabText(), startX + tabHorizontalPadding, baseline)
+        g2.drawString(actionText, startX + tabWidth + tabHorizontalPadding * 2 + spacing, baseline)
 
-        // ── TAB keycap ───────────────────────────────────────────────────
-        val tabTextW = tabFm.stringWidth("TAB")
-        val keycapW = tabTextW + keycapHPad * 2
-        val keycapH = bgHeight - vPad * 2
-        val keycapX = targetRegion.x + hPad
-        val keycapY = bgY + vPad
-
-        // keycap fill
-        g2.color = Color(0x43454A)
-        g2.fillRoundRect(keycapX, keycapY, keycapW, keycapH, arc, arc)
-        // keycap border
-        g2.color = Color(0x5E6065)
-        g2.drawRoundRect(keycapX, keycapY, keycapW - 1, keycapH - 1, arc, arc)
-
-        // keycap text
-        g2.color = Color.WHITE
-        g2.font = tabFont
-        val tabTextX = keycapX + keycapHPad
-        val tabTextY = keycapY + (keycapH - tabFm.height) / 2 + tabFm.ascent
-        g2.drawString("TAB", tabTextX, tabTextY)
-
-        // ── "to jump here" label ─────────────────────────────────────────
-        g2.color = Color(0x888888)
-        g2.font = labelFont
-        val labelX = keycapX + keycapW + gap
-        val labelY = bgY + (bgHeight - labelFm.height) / 2 + labelFm.ascent
-        g2.drawString("to jump here", labelX, labelY)
-
+        val cursorX = startX - px * 2
+        g2.color = Color(31436)
+        g2.fillRoundRect(cursorX, startY, 2, totalHeight, 2, 2)
         g2.dispose()
     }
 
-    private fun Color.darkenBy(percent: Float): Color {
-        val factor = (1f - percent).coerceIn(0f, 1f)
-        return Color(
-            (red * factor).toInt().coerceIn(0, 255),
-            (green * factor).toInt().coerceIn(0, 255),
-            (blue * factor).toInt().coerceIn(0, 255),
-            alpha
-        )
+    private fun tabText(): String {
+        val action = ActionManager.getInstance().getAction("oxidecode.acceptNes")
+        val shortcutText = action?.let(KeymapUtil::getFirstKeyboardShortcutText)
+        return shortcutText?.takeIf { it.isNotBlank() } ?: "Tab"
+    }
+
+    private fun withAlpha(color: Color, alpha: Float): Color =
+        Color(color.red, color.green, color.blue, (255 * alpha).toInt().coerceIn(0, 255))
+
+    override fun dispose() = Unit
+
+    private companion object {
+        val FOREGROUND = JBColor(Color(0x333333), Color(0xC8CCD4))
     }
 }
