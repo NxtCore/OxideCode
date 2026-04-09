@@ -90,12 +90,19 @@ class CoreBridge {
 
             LOG.info("Loading OxideCode native library")
             val os = System.getProperty("os.name").lowercase()
+            val arch = System.getProperty("os.arch").lowercase()
+
             val ext = when {
                 os.contains("win") -> "dll"
                 os.contains("mac") -> "dylib"
                 else -> "so"
             }
-            val resourcePath = "/native/oxidecode_jvm.$ext"
+            val archTag = when {
+                arch.contains("aarch64") || arch.contains("arm") -> "arm64"
+                else -> "x64"
+            }
+
+            val resourcePath = "/native/oxidecode_jvm_${archTag}.$ext"
             val stream = CoreBridge::class.java.getResourceAsStream(resourcePath)
                 ?: error("Native library not found in jar: $resourcePath")
 

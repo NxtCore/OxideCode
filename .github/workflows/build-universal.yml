@@ -1,0 +1,172 @@
+name: Build Universal Packages
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_RELEASE_LTO: true
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+
+jobs:
+  build-native:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: blacksmith-2vcpu-ubuntu-2204
+            node_out: liboxidecode_node.so
+            node_dest: oxidecode.linux-x64.node
+            jvm_out: liboxidecode_jvm.so
+            jvm_dest: oxidecode_jvm.linux.so
+
+          - target: aarch64-apple-darwin
+            runner: blacksmith-2vcpu-ubuntu-2204
+            node_out: liboxidecode_node.dylib
+            node_dest: oxidecode.darwin-arm64.node
+            jvm_out: liboxidecode_jvm.dylib
+            jvm_dest: oxidecode_jvm.darwin-arm64.dylib
+
+          - target: x86_64-apple-darwin
+            runner: blacksmith-2vcpu-ubuntu-2204
+            node_out: liboxidecode_node.dylib
+            node_dest: oxidecode.darwin-x64.node
+            jvm_out: liboxidecode_jvm.dylib
+            jvm_dest: oxidecode_jvm.darwin-x64.dylib
+
+          - target: x86_64-pc-windows-msvc
+            runner: blacksmith-2vcpu-ubuntu-2204
+            node_out: oxidecode_node.dll
+            node_dest: oxidecode.win32-x64.node
+            jvm_out: oxidecode_jvm.dll
+            jvm_dest: oxidecode_jvm.win32.dll
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install zig and cargo-zigbuild
+        run: |
+          pip install ziglang
+          cargo install cargo-zigbuild --locked
+
+      - name: Cache cargo
+        uses: useblacksmith/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.target }}-cargo-
+
+      - name: Build native binaries
+        run: |
+          cargo zigbuild --release \
+            -p oxidecode-node \
+            -p oxidecode-jvm \
+            --target ${{ matrix.target }}
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts
+          cp "target/${{ matrix.target }}/release/${{ matrix.node_out }}" "artifacts/${{ matrix.node_dest }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.jvm_out }}" "artifacts/${{ matrix.jvm_dest }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: artifacts/*
+          retention-days: 1
+
+  package-vscode:
+    needs: build-native
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Download all node modules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: temp-artifacts
+          merge-multiple: true
+
+      - name: Move node modules to extension directory
+        run: |
+          mkdir -p vscode-extension
+          mv temp-artifacts/*.node vscode-extension/
+
+      - name: Verify node modules
+        working-directory: vscode-extension
+        run: ls -la oxidecode.*.node
+
+      - name: Install dependencies
+        working-directory: vscode-extension
+        run: bun install --frozen-lockfile
+
+      - name: Build extension JS
+        working-directory: vscode-extension
+        run: bun run build
+
+      - name: Package VSIX
+        working-directory: vscode-extension
+        run: bunx @vscode/vsce package --no-dependencies
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxidecode-vscode-extension
+          path: vscode-extension/*.vsix
+          retention-days: 30
+
+  package-intellij:
+    needs: build-native
+    runs-on: blacksmith-2vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all JVM native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: temp-artifacts
+          merge-multiple: true
+
+      - name: Place native libs into resources
+        run: |
+          mkdir -p intellij-plugin/src/main/resources/native
+          cp temp-artifacts/oxidecode_jvm.linux.so intellij-plugin/src/main/resources/native/
+          cp temp-artifacts/oxidecode_jvm.darwin-arm64.dylib intellij-plugin/src/main/resources/native/
+          cp temp-artifacts/oxidecode_jvm.darwin-x64.dylib intellij-plugin/src/main/resources/native/
+          cp temp-artifacts/oxidecode_jvm.win32.dll intellij-plugin/src/main/resources/native/
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Build IntelliJ plugin
+        working-directory: intellij-plugin
+        run: ./gradlew clean buildPlugin -PskipNativeCopy --no-daemon --parallel
+
+      - name: Upload IntelliJ plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxidecode-intellij-plugin
+          path: intellij-plugin/build/distributions/*.zip
+          retention-days: 30

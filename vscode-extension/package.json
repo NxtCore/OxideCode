@@ -2,7 +2,7 @@
 	"name": "oxidecode",
 	"displayName": "OxideCode",
 	"description": "AI autocomplete and next-edit suggestions powered by local and cloud models",
-	"version": "0.2.0",
+	"version": "0.2.5",
 	"publisher": "oxidecode",
 	"icon": "light.png",
 	"engines": {
@@ -237,11 +237,17 @@
 		"build:native": "cd .. && cargo build --release -p oxidecode-node",
 		"build:native:copy": "bun run build:native && node -e \"const fs=require('fs');const p=process.platform;const a=process.arch;fs.copyFileSync('../target/release/oxidecode_node'+(p==='win32'?'.dll':p==='darwin'?'.dylib':'.so'),'oxidecode.'+p+'-'+a+'.node')\"",
 		"build:all": "bun run build:native:copy && bun run build",
+		"build:native:linux-x64": "cargo zigbuild --release -p oxidecode-node --manifest-path ../Cargo.toml --target x86_64-unknown-linux-gnu && node -e \"require('fs').copyFileSync('../target/x86_64-unknown-linux-gnu/release/liboxidecode_node.so','oxidecode.linux-x64.node')\"",
+		"build:native:darwin-arm64": "cargo zigbuild --release -p oxidecode-node --manifest-path ../Cargo.toml --target aarch64-apple-darwin && node -e \"require('fs').copyFileSync('../target/aarch64-apple-darwin/release/liboxidecode_node.dylib','oxidecode.darwin-arm64.node')\"",
+		"build:native:darwin-x64": "cargo zigbuild --release -p oxidecode-node --manifest-path ../Cargo.toml --target x86_64-apple-darwin && node -e \"require('fs').copyFileSync('../target/x86_64-apple-darwin/release/liboxidecode_node.dylib','oxidecode.darwin-x64.node')\"",
+		"build:native:win32-x64": "cargo zigbuild --release -p oxidecode-node --manifest-path ../Cargo.toml --target x86_64-pc-windows-msvc && node -e \"require('fs').copyFileSync('../target/x86_64-pc-windows-msvc/release/oxidecode_node.dll','oxidecode.win32-x64.node')\"",
+		"build:native:all-platforms": "bun run build:native:linux-x64 && bun run build:native:darwin-arm64 && bun run build:native:darwin-x64 && bun run build:native:win32-x64",
 		"typecheck": "bun tsgo --noEmit",
 		"lint": "bun biome check .",
 		"fix": "bun biome check . --write",
 		"package": "bunx vsce package --no-dependencies",
-		"package:all": "bun run build:all && bun run package"
+		"package:all": "bun run build:all && bun run package",
+		"package:universal": "bun run build && bun run package"
 	},
 	"files": [
 		"out/**/*",
