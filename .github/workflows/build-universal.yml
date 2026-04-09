@@ -60,7 +60,7 @@ jobs:
           cargo install cargo-zigbuild --locked
 
       - name: Cache cargo
-        uses: useblacksmith/cache@v6
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry/index
