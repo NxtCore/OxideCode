@@ -13,7 +13,7 @@ authors = ["OxideCode Contributors"]
 license = "MIT"
 
 [workspace.dependencies]
-omniference = { path = "../omniference", version = "0.1.5" }
+omniference = { version = "0.1.5" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
