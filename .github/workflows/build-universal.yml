@@ -12,52 +12,20 @@ env:
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
 
 jobs:
-  build-native:
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: blacksmith-2vcpu-ubuntu-2204
-            node_out: liboxidecode_node.so
-            node_dest: oxidecode.linux-x64.node
-            jvm_out: liboxidecode_jvm.so
-            jvm_dest: oxidecode_jvm.linux.so
-
-          - target: aarch64-apple-darwin
-            runner: blacksmith-2vcpu-ubuntu-2204
-            node_out: liboxidecode_node.dylib
-            node_dest: oxidecode.darwin-arm64.node
-            jvm_out: liboxidecode_jvm.dylib
-            jvm_dest: oxidecode_jvm.darwin-arm64.dylib
-
-          - target: x86_64-apple-darwin
-            runner: blacksmith-2vcpu-ubuntu-2204
-            node_out: liboxidecode_node.dylib
-            node_dest: oxidecode.darwin-x64.node
-            jvm_out: liboxidecode_jvm.dylib
-            jvm_dest: oxidecode_jvm.darwin-x64.dylib
-
-          - target: x86_64-pc-windows-msvc
-            runner: blacksmith-2vcpu-ubuntu-2204
-            node_out: oxidecode_node.dll
-            node_dest: oxidecode.win32-x64.node
-            jvm_out: oxidecode_jvm.dll
-            jvm_dest: oxidecode_jvm.win32.dll
-
+  build-linux:
+    runs-on: blacksmith-2vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-gnu
 
-      - name: Install zig and cargo-zigbuild
+      - name: Install Linux dependencies
         run: |
-          pip install ziglang
-          cargo install cargo-zigbuild --locked
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -67,30 +35,124 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ matrix.target }}-cargo-
+          key: linux-x86_64-unknown-linux-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            linux-x86_64-unknown-linux-gnu-cargo-
 
       - name: Build native binaries
         run: |
-          cargo zigbuild --release \
+          cargo build --release \
+            --target x86_64-unknown-linux-gnu \
             -p oxidecode-node \
-            -p oxidecode-jvm \
-            --target ${{ matrix.target }}
+            -p oxidecode-jvm
 
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          cp "target/${{ matrix.target }}/release/${{ matrix.node_out }}" "artifacts/${{ matrix.node_dest }}"
-          cp "target/${{ matrix.target }}/release/${{ matrix.jvm_out }}" "artifacts/${{ matrix.jvm_dest }}"
+          cp "target/x86_64-unknown-linux-gnu/release/liboxidecode_node.so" "artifacts/oxidecode.linux-x64.node"
+          cp "target/x86_64-unknown-linux-gnu/release/liboxidecode_jvm.so" "artifacts/oxidecode_jvm.linux.so"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.target }}
+          name: binaries-x86_64-unknown-linux-gnu
+          path: artifacts/*
+          retention-days: 1
+
+  build-macos:
+    runs-on: blacksmith-6vcpu-macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: macos-universal-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-universal-cargo-
+
+      - name: Build arm64 binaries
+        run: |
+          cargo build --release \
+            --target aarch64-apple-darwin \
+            -p oxidecode-node \
+            -p oxidecode-jvm
+
+      - name: Build x64 binaries
+        run: |
+          cargo build --release \
+            --target x86_64-apple-darwin \
+            -p oxidecode-node \
+            -p oxidecode-jvm
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts
+          cp "target/aarch64-apple-darwin/release/liboxidecode_node.dylib" "artifacts/oxidecode.darwin-arm64.node"
+          cp "target/aarch64-apple-darwin/release/liboxidecode_jvm.dylib" "artifacts/oxidecode_jvm.darwin-arm64.dylib"
+          cp "target/x86_64-apple-darwin/release/liboxidecode_node.dylib" "artifacts/oxidecode.darwin-x64.node"
+          cp "target/x86_64-apple-darwin/release/liboxidecode_jvm.dylib" "artifacts/oxidecode_jvm.darwin-x64.dylib"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-macos
+          path: artifacts/*
+          retention-days: 1
+
+  build-windows:
+    runs-on: blacksmith-2vcpu-windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry\index
+            ~\.cargo\registry\cache
+            ~\.cargo\git\db
+            target
+          key: windows-x86_64-pc-windows-msvc-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            windows-x86_64-pc-windows-msvc-cargo-
+
+      - name: Build native binaries
+        shell: pwsh
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc -p oxidecode-node -p oxidecode-jvm
+
+      - name: Prepare artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/oxidecode_node.dll" "artifacts/oxidecode.win32-x64.node"
+          Copy-Item "target/x86_64-pc-windows-msvc/release/oxidecode_jvm.dll" "artifacts/oxidecode_jvm.win32.dll"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-x86_64-pc-windows-msvc
           path: artifacts/*
           retention-days: 1
 
   package-vscode:
-    needs: build-native
+    needs:
+      - build-linux
+      - build-macos
+      - build-windows
     runs-on: blacksmith-2vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
@@ -133,7 +195,10 @@ jobs:
           retention-days: 30
 
   package-intellij:
-    needs: build-native
+    needs:
+      - build-linux
+      - build-macos
+      - build-windows
     runs-on: blacksmith-2vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
