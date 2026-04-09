@@ -225,6 +225,10 @@ jobs:
           java-version: "21"
           cache: gradle
 
+      - name: Make gradlew executable
+        working-directory: intellij-plugin
+        run: chmod +x gradlew
+
       - name: Build IntelliJ plugin
         working-directory: intellij-plugin
         run: ./gradlew clean buildPlugin -PskipNativeCopy --no-daemon --parallel
