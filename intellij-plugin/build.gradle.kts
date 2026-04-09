@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.oxidecode"
-version = "0.2.2"
+version = "0.2.4"
 
 repositories {
     mavenCentral()

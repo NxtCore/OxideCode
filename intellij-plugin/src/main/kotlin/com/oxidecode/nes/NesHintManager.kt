@@ -127,10 +127,14 @@ object NesHintManager {
 
     private fun showJump(editor: Editor, preview: NesDisplayPreview, editStartLine: Int) {
         val project = editor.project ?: return
+        val popupContext = buildPopupContext(editor.document, preview)
         activePopupPreview = NesPopupPreview(
             project = project,
-            editor = editor,
-            preview = preview,
+            oldContent = popupContext.oldContent,
+            content = popupContext.newContent,
+            startOffset = popupContext.startOffset,
+            fileExtension = editor.virtualFile?.extension ?: "txt",
+            globalEditor = editor,
             parentDisposable = Disposer.newDisposable(),
         ).also { it.showNearCaret() }
         activeJumpHintManager = JumpHintManager(
@@ -254,7 +258,55 @@ object NesHintManager {
         val lineEnd = document.getLineEndOffset(safeLine)
         return lineStart + col.coerceAtMost(lineEnd - lineStart)
     }
+
+    private fun hintPreviewReplacement(preview: NesDisplayPreview, oldContent: String): String {
+        val hint = activeHint ?: return preview.popupText
+        val prefix = oldContent.commonPrefixWith(hint.replacement)
+        val suffix = oldContent.commonSuffixWith(hint.replacement)
+        if (prefix.length + suffix.length >= hint.replacement.length) return hint.replacement
+        return prefix + hint.replacement.substring(prefix.length, hint.replacement.length - suffix.length) + suffix
+    }
+
+    private fun buildPopupContext(
+        document: com.intellij.openapi.editor.Document,
+        preview: NesDisplayPreview,
+    ): PopupContext {
+        val hint = activeHint ?: return PopupContext(
+            oldContent = document.getText(preview.replaceRange),
+            newContent = preview.popupText,
+            startOffset = preview.replaceRange.startOffset,
+        )
+
+        val replaceStart = preview.replaceRange.startOffset
+        val replaceEnd = preview.replaceRange.endOffset
+        val anchorStart = minOf(replaceStart, preview.adjustedJumpOffset)
+        val anchorEnd = maxOf(replaceEnd, preview.adjustedJumpOffset)
+        val startLine = document.getLineNumber(anchorStart.coerceIn(0, document.textLength))
+        val endLine = document.getLineNumber(anchorEnd.coerceIn(0, document.textLength))
+        val contextStart = document.getLineStartOffset(startLine)
+        val contextEnd = document.getLineEndOffset(endLine)
+        val oldContent = document.getText(TextRange(contextStart, contextEnd))
+        val relativeStart = (replaceStart - contextStart).coerceIn(0, oldContent.length)
+        val relativeEnd = (replaceEnd - contextStart).coerceIn(relativeStart, oldContent.length)
+        val newContent = buildString {
+            append(oldContent.substring(0, relativeStart))
+            append(hint.replacement)
+            append(oldContent.substring(relativeEnd))
+        }
+
+        return PopupContext(
+            oldContent = oldContent,
+            newContent = newContent,
+            startOffset = contextStart,
+        )
+    }
 }
+
+private data class PopupContext(
+    val oldContent: String,
+    val newContent: String,
+    val startOffset: Int,
+)
 
 data class NesDisplayPreview(
     val displayOffset: Int,

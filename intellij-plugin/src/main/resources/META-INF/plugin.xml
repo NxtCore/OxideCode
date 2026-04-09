@@ -4,7 +4,7 @@
     <vendor>OxideCode</vendor>
     <description>AI autocomplete and Next Edit Suggestions powered by local and cloud models.</description>
     <change-notes><![CDATA[
-        <h3>Version 0.1.0</h3>
+        <h3>Version 0.2.4</h3>
         <ul>
             <li>Initial release with AI autocomplete</li>
             <li>Next Edit Suggestions (NES) support</li>

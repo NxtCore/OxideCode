@@ -914,13 +914,13 @@ pub fn parse_zeta2_response(raw: &str) -> Option<String> {
 // Port of Sweep AI's next-edit format from the `sweepai/sweep-next-edit-1.5b`
 // model.  Reference:
 //   - Blog: https://blog.sweep.dev/posts/oss-next-edit
-//   - Decoded IntelliJ plugin at `E:\Coding\SweepDecode`
+//   - Python reference: sweepai/sweep-next-edit-v2-7B/blob/main/inference.py
 //
 // Prompt shape:
 //
 //   <|file_sep|>{file_path}
 //   {truncated_file_contents (~200-line chunk around cursor)}
-//   File: {path}:{start}:{end}
+//   <|file_sep|>{path}:{start}:{end}
 //   original:
 //   {old_code}
 //   updated:
@@ -943,24 +943,170 @@ pub mod sweep {
     pub const CURSOR_MARKER: &str = "<|cursor|>";
     /// Qwen end-of-text token.
     pub const ENDOFTEXT: &str = "<|endoftext|>";
-    /// Tokens that signal the model has finished generating.
+
     pub const STOP_TOKENS: &[&str] = &[
         "<|endoftext|>",
         "<|file_sep|>",
-        "<|fim_prefix>",
+        "<|fim_prefix|>",
         "<|fim_suffix|>",
         "<|fim_middle|>",
+        "<|fim_pad|>",
+        "<|repo_name|>",
+        "<|im_start|>",
+        "<|im_end|>",
     ];
-    /// Number of lines to include above the cursor in the code block.
-    pub const BLOCK_LINES_BEFORE: usize = 5;
-    /// Number of lines to include below the cursor in the code block.
-    pub const BLOCK_LINES_AFTER: usize = 5;
+
+    pub const BLOCK_LINES_BEFORE: usize = 10;
+    pub const BLOCK_LINES_AFTER: usize = 10;
+
     /// Target chunk size (in lines) for truncating the full file context.
     pub const CHUNK_SIZE: usize = 200;
     /// Overlap between adjacent chunks (0 = no overlap).
     pub const CHUNK_OVERLAP: usize = 0;
     /// Maximum number of recent change hunks to include in the prompt.
     pub const MAX_RECENT_CHANGES: usize = 10;
+
+    /// Number of lines to prefill when in insertion-above-cursor mode.
+    /// Python: `NUM_LINES_ABOVE = 1` inside `compute_prefill`.
+    pub const PREFILL_LINES_ABOVE: usize = 1;
+}
+
+// ─── Helper: compute_line_starts (unchanged, kept local) ─────────────────────
+
+fn compute_line_starts_sweep(text: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (index, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(index + 1);
+        }
+    }
+    starts
+}
+
+// Ported from Python:
+//
+//   def compute_prefill(code_block, relative_cursor, changes_above_cursor=False):
+//       if changes_above_cursor:
+//           prefill = code_block[:relative_cursor]
+//           prefilled_lines = prefill.splitlines(True)
+//           NUM_LINES_ABOVE = 1
+//           before_split = "".join(prefilled_lines[:NUM_LINES_ABOVE])
+//           after_split  = "".join(prefilled_lines[NUM_LINES_ABOVE:])
+//           leading_newlines = len(after_split) - len(after_split.lstrip("\n"))
+//           before_split += "\n" * leading_newlines
+//           return before_split
+//       else:
+//           prefix_before_cursor = code_block[:relative_cursor]
+//           if "\n" not in prefix_before_cursor:
+//               return ""
+//           prefill_end = prefix_before_cursor.rfind("\n") + 1
+//           return code_block[:prefill_end]
+
+fn compute_prefill(code_block: &str, relative_cursor: usize, changes_above_cursor: bool) -> String {
+    if changes_above_cursor {
+        // Insertion mode: only keep the first line of the pre-cursor content,
+        // plus any leading blank lines that follow it.  The model then rewrites
+        // from line 2 onward, which is the region where the insertion happened.
+        let pre_cursor = &code_block[..relative_cursor];
+        let lines: Vec<&str> = pre_cursor.splitlines_keep_terminator();
+        let before_split: String = lines
+            .iter()
+            .take(sweep::PREFILL_LINES_ABOVE)
+            .copied()
+            .collect();
+        let after_split: String = lines
+            .iter()
+            .skip(sweep::PREFILL_LINES_ABOVE)
+            .copied()
+            .collect();
+        let leading_newlines = after_split.len() - after_split.trim_start_matches('\n').len();
+        format!("{}{}", before_split, "\n".repeat(leading_newlines))
+    } else {
+        // Default mode: prefill everything up to (and including) the last
+        // newline before the cursor.  The model edits at/below the cursor.
+        let pre_cursor = &code_block[..relative_cursor];
+        match pre_cursor.rfind('\n') {
+            Some(pos) => code_block[..=pos].to_string(),
+            None => String::new(),
+        }
+    }
+}
+
+// A small trait to avoid a dependency on an external crate; mirrors Python's
+// `str.splitlines(keepends=True)`.
+trait SplitlinesKeepTerminator {
+    fn splitlines_keep_terminator(&self) -> Vec<&str>;
+}
+
+impl SplitlinesKeepTerminator for str {
+    fn splitlines_keep_terminator(&self) -> Vec<&str> {
+        let mut lines = Vec::new();
+        let mut start = 0;
+        for (i, b) in self.bytes().enumerate() {
+            if b == b'\n' {
+                lines.push(&self[start..=i]);
+                start = i + 1;
+            }
+        }
+        if start < self.len() {
+            lines.push(&self[start..]);
+        }
+        lines
+    }
+}
+
+// Ported from Python:
+//
+//   def is_pure_insertion_above_cursor(code_block, completion, relative_cursor):
+//       if not code_block or relative_cursor <= 0: return False
+//       current_line_index = len(code_block[:relative_cursor].splitlines(True))
+//       code_block_lines = code_block.splitlines(True)
+//       if current_line_index < 1 or current_line_index > len(code_block_lines): return False
+//       cursor_line = code_block_lines[current_line_index - 1]
+//       if code_block.strip() == completion.strip(): return False
+//       if not cursor_line.strip(): return False
+//       prefix_lines = code_block_lines[:current_line_index - 1]
+//       prefix = "".join(prefix_lines)
+//       suffix_lines = code_block_lines[current_line_index:]
+//       suffix = "".join(suffix_lines)
+//       return completion.startswith(prefix) and completion.endswith(cursor_line + suffix)
+
+fn is_pure_insertion_above_cursor(
+    code_block: &str,
+    completion: &str,
+    relative_cursor: usize,
+) -> bool {
+    if code_block.is_empty() || relative_cursor == 0 {
+        return false;
+    }
+
+    let lines_before_cursor: Vec<&str> = code_block[..relative_cursor]
+        .splitlines_keep_terminator();
+    let current_line_index = lines_before_cursor.len(); // 1-based count
+
+    let code_block_lines: Vec<&str> = code_block.splitlines_keep_terminator();
+    if current_line_index < 1 || current_line_index > code_block_lines.len() {
+        return false;
+    }
+
+    let cursor_line = code_block_lines[current_line_index - 1];
+
+    // If the completion is essentially the same content, no real edit happened.
+    if code_block.trim() == completion.trim() {
+        return false;
+    }
+
+    // An empty cursor line means the cursor sits on blank space — not an
+    // insertion-above pattern worth rejecting.
+    if cursor_line.trim().is_empty() {
+        return false;
+    }
+
+    let prefix: String = code_block_lines[..current_line_index - 1].concat();
+    let suffix: String = code_block_lines[current_line_index..].concat();
+
+    completion.starts_with(prefix.as_str())
+        && completion.ends_with(&format!("{}{}", cursor_line, suffix))
 }
 
 /// Metadata returned alongside the prompt string, needed later to convert the
@@ -981,18 +1127,12 @@ pub struct SweepPromptContext {
     pub cursor_line_start: u32,
     /// 1-indexed end line used in the prompt section headers.
     pub cursor_line_end: u32,
+    pub relative_cursor_offset: usize,
 }
 
-/// Extract a code block of ±`BLOCK_LINES_BEFORE`/`BLOCK_LINES_AFTER` lines
-/// around `cursor_line`.
-///
-/// Returns `(code_block, block_start_byte_offset, block_start_line_0indexed)`.
-///
-/// Port of Sweep's `getBlockAtCursor` with default
-/// `numLinesBefore=5, numLinesAfter=5`.
 fn sweep_get_block_at_cursor(file_content: &str, cursor_line: u32) -> (String, usize, u32) {
     let lines: Vec<&str> = file_content.lines().collect();
-    let line_starts = compute_line_starts(file_content);
+    let line_starts = compute_line_starts_sweep(file_content);
     let cursor = cursor_line as usize;
     let start = cursor.saturating_sub(sweep::BLOCK_LINES_BEFORE);
     let end = (cursor + sweep::BLOCK_LINES_AFTER + 1).min(lines.len());
@@ -1003,11 +1143,6 @@ fn sweep_get_block_at_cursor(file_content: &str, cursor_line: u32) -> (String, u
     (code_block, block_start_offset, start as u32)
 }
 
-/// Truncate `file_content` to the nearest ~`CHUNK_SIZE`-line chunk that
-/// contains `cursor_line`.
-///
-/// Port of Sweep's `getNearestChunkAtCursor` with
-/// `chunkSize=200, overlapSize=0`.
 fn sweep_get_nearest_chunk(file_content: &str, cursor_line: u32) -> String {
     let lines: Vec<&str> = file_content.lines().collect();
     let total = lines.len();
@@ -1027,8 +1162,6 @@ fn sweep_get_nearest_chunk(file_content: &str, cursor_line: u32) -> String {
         start += sweep::CHUNK_SIZE - sweep::CHUNK_OVERLAP;
     }
 
-    // First try: chunk that directly contains the cursor.
-    // Fallback: chunk whose midpoint is closest.
     let mut nearest = &chunks[0];
     let mut min_dist = usize::MAX;
     for chunk in &chunks {
@@ -1048,59 +1181,59 @@ fn sweep_get_nearest_chunk(file_content: &str, cursor_line: u32) -> String {
     lines[nearest.0..nearest.1].join("\n")
 }
 
-/// Convert OxideCode `EditDelta`s into Sweep's diff format and compute the
-/// `prevSection` (code block state before recent changes were applied).
-///
-/// Each delta becomes:
-/// ```text
-/// File: {filepath}:{start_line}:{end_line}
-/// original:
-/// {removed_text}
-/// updated:
-/// {inserted_text}
-/// ```
-///
-/// `prevSection` is computed by walking the edits in reverse and un-applying
-/// each one (replacing `inserted` text with `removed` text in the current
-/// section).
+
 fn sweep_format_changes_and_prev_section(
     recent_edits: &[EditDelta],
     current_section: &str,
     cursor_filepath: &str,
 ) -> (String, String) {
-    // Start with the current section, stripped of the cursor marker.
     let mut prev_section = current_section.replace(sweep::CURSOR_MARKER, "");
 
-    // Filter to edits that aren't whitespace-only.
     let edits: Vec<&EditDelta> = recent_edits
         .iter()
         .filter(|d| {
-            let old_significant = !d.removed.trim().is_empty();
-            let new_significant = !d.inserted.trim().is_empty();
-            old_significant || new_significant
+            !d.removed.trim().is_empty() || !d.inserted.trim().is_empty()
         })
         .collect();
 
-    // Walk edits in reverse to un-apply changes and recover the original
-    // section state (matching Sweep's `formatRecentChangesAndPrevSection`).
+    // Un-apply edits in reverse to recover the pre-edit state of prev_section.
     for delta in edits
         .iter()
         .rev()
         .filter(|delta| delta.filepath == cursor_filepath)
     {
         if !delta.inserted.is_empty() && prev_section.contains(delta.inserted.as_str()) {
-            // The "new" text is present in the section — replace first
-            // occurrence with the "old" text to un-apply this edit.
             prev_section = prev_section.replacen(&delta.inserted, &delta.removed, 1);
         } else {
-            // Can't un-apply: the inserted text isn't in the section (the
-            // edit might target a different region of the file).  Stop here
-            // to avoid mangling unrelated text.
             break;
         }
     }
 
-    // Format the last N edits for the prompt.
+    let has_current_file_edits = edits
+        .iter()
+        .any(|d| d.filepath == cursor_filepath);
+
+    if !has_current_file_edits {
+        // Locate the cursor marker in the *original* current_section string to
+        // find the truncation point (last newline before the cursor).
+        if let Some(cursor_pos) = current_section.find(sweep::CURSOR_MARKER) {
+            let pre_cursor = &current_section[..cursor_pos];
+            let truncate_at = match pre_cursor.rfind('\n') {
+                Some(pos) => pos + 1,
+                None => 0,
+            };
+            // prev_section had the cursor marker stripped already, so byte
+            // offsets into it match current_section minus the marker length.
+            // The cursor marker sits exactly at `cursor_pos` in current_section
+            // and at `cursor_pos` in prev_section (marker was stripped, not
+            // replaced, so everything before cursor_pos is identical).
+            prev_section = prev_section[..truncate_at].to_string();
+        }
+    }
+
+    // FIX #1/#2: Format diff entries using `{path}:{start_line}:{end_line}` as
+    // the header, matching the Python DIFF_FORMAT template exactly.
+    // Old code used `{path}.diff` (no line numbers).
     let changes_to_format: &[&EditDelta] = if edits.len() > sweep::MAX_RECENT_CHANGES {
         &edits[edits.len() - sweep::MAX_RECENT_CHANGES..]
     } else {
@@ -1109,23 +1242,33 @@ fn sweep_format_changes_and_prev_section(
 
     let mut result = String::new();
     for delta in changes_to_format {
-        let old_trimmed = delta.removed.trim();
-        let new_trimmed = delta.inserted.trim();
-        if old_trimmed.is_empty() && new_trimmed.is_empty() {
-            continue;
-        }
-
         let old_code = delta.removed.trim_end_matches('\n');
         let new_code = delta.inserted.trim_end_matches('\n');
+
+        // Compute end line from start line + number of lines removed.
+        let removed_line_count = if delta.removed.is_empty() {
+            0u32
+        } else {
+            delta.removed.lines().count() as u32
+        };
+        let end_line = delta.start_line + removed_line_count;
 
         use std::fmt::Write;
         let _ = write!(
             result,
-            "{}{}.diff\noriginal:\n{}\nupdated:\n{}\n",
-            sweep::FILE_SEP,       // <|file_sep|>
-            delta.filepath,        // {changed_file_1}.diff
-            old_code,
-            new_code,
+            // Python DIFF_FORMAT:
+            //   <|file_sep|>{file_path}:{start_line}:{end_line}
+            //   original:
+            //   {old_code}
+            //   updated:
+            //   {new_code}
+            "{}{filepath}:{start}:{end}\noriginal:\n{old}\nupdated:\n{new}\n",
+            sweep::FILE_SEP,
+            filepath = delta.filepath,
+            start    = delta.start_line,
+            end      = end_line,
+            old      = old_code,
+            new      = new_code,
         );
     }
 
@@ -1133,10 +1276,6 @@ fn sweep_format_changes_and_prev_section(
     (result, prev_section)
 }
 
-/// Compute the 1-indexed line range that a substring occupies within
-/// `file_content`, given its starting byte offset and byte length.
-///
-/// Port of Sweep's `getLineRange`.
 fn sweep_compute_line_range(
     file_content: &str,
     section_start_offset: usize,
@@ -1156,22 +1295,22 @@ fn sweep_compute_line_range(
             end_line = (i + 1) as u32;
             break;
         }
-        current_pos += line.len() + 1; // +1 for newline
+        current_pos += line.len() + 1;
     }
 
     (start_line, end_line)
 }
 
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /// Build the complete Sweep next-edit prompt and a `SweepPromptContext` for
 /// later response parsing.
 ///
-/// Follows the flow in Sweep's `LlamaCppService.processAutocompleteRequest`:
-///   1. Extract a ±5-line code block around the cursor.
-///   2. Truncate the original file to a ~200-line chunk for context.
-///   3. Format recent edits and compute the prevSection.
-///   4. Insert the `<|cursor|>` marker at the cursor position.
-///   5. Compute the prefill (text before cursor up to the last newline).
-///   6. Assemble the full prompt.
+/// `changes_above_cursor`: set to `true` when recent edits were made above the
+/// cursor (insertion mode).  Mirrors Python's `changes_above_cursor` parameter
+/// to `build_prompt` / `compute_prefill`.  In insertion mode the prefill is
+/// limited to the first line + leading blank lines so the model rewrites from
+/// line 2, which is where the insertion region starts.
 pub fn build_sweep_prompt(
     recent_edits: &[EditDelta],
     cursor_filepath: &str,
@@ -1179,6 +1318,8 @@ pub fn build_sweep_prompt(
     cursor_col: u32,
     file_content: &str,
     original_file_content: &str,
+    // FIX #5: new parameter mirroring Python's `changes_above_cursor`
+    changes_above_cursor: bool,
 ) -> (String, SweepPromptContext) {
     // 1. Extract code block around cursor.
     let (code_block, block_start_offset, block_start_line) =
@@ -1193,7 +1334,7 @@ pub fn build_sweep_prompt(
             relative_cursor_offset += (cursor_col as usize).min(line.len());
             break;
         }
-        relative_cursor_offset += line.len() + 1; // +1 for \n
+        relative_cursor_offset += line.len() + 1;
     }
     let relative_cursor_offset = relative_cursor_offset.min(code_block.len());
 
@@ -1205,28 +1346,16 @@ pub fn build_sweep_prompt(
         &code_block[relative_cursor_offset..],
     );
 
-    // 4. Format recent changes and compute prev_section.
     let (formatted_changes, prev_section) =
         sweep_format_changes_and_prev_section(recent_edits, &current_section, cursor_filepath);
 
-    // 5. Compute prefill — text before cursor up to (and including) the last
-    //    newline.  This is prepended to the model output to form the full
-    //    updated code block.
-    let before_cursor = &code_block[..relative_cursor_offset];
-    let prefill = match before_cursor.rfind('\n') {
-        Some(pos) => format!("{}\n", &before_cursor[..pos]),
-        None => String::new(),
-    };
+    let prefill = compute_prefill(&code_block, relative_cursor_offset, changes_above_cursor);
 
-    // 6. Truncate the *original* file content (pre-edit snapshot) to a
-    //    ~200-line chunk for the top-level context section.
     let truncated_file = sweep_get_nearest_chunk(original_file_content, cursor_line);
 
-    // 7. Compute 1-indexed line range of the code block.
     let (cursor_line_start, cursor_line_end) =
         sweep_compute_line_range(file_content, block_start_offset, code_block.len());
 
-    // 8. Assemble the prompt.
     let mut prompt = String::new();
 
     // File context section.
@@ -1242,7 +1371,7 @@ pub fn build_sweep_prompt(
         prompt.push('\n');
     }
 
-    // Original section (code block before recent changes).
+    // Original section.
     prompt.push_str(sweep::FILE_SEP);
     prompt.push_str("original/");
     prompt.push_str(cursor_filepath);
@@ -1254,7 +1383,7 @@ pub fn build_sweep_prompt(
     prompt.push_str(&prev_section);
     prompt.push('\n');
 
-    // Current section (code block with cursor marker).
+    // Current section.
     prompt.push_str(sweep::FILE_SEP);
     prompt.push_str("current/");
     prompt.push_str(cursor_filepath);
@@ -1284,6 +1413,7 @@ pub fn build_sweep_prompt(
         prefill,
         cursor_line_start,
         cursor_line_end,
+        relative_cursor_offset,
     };
 
     (prompt, ctx)
@@ -1294,20 +1424,29 @@ pub fn build_sweep_prompt(
 /// Strips any leaked stop tokens, then prepends the `prefill` to reconstruct
 /// the full updated code block.
 ///
-/// Returns `None` if the result is empty (no edit predicted).
-pub fn parse_sweep_response(raw: &str, ctx: &SweepPromptContext) -> Option<String> {
-    // Strip stop tokens that may leak through despite being set as stop
-    // sequences (some inference servers include them in the output).
+/// Returns `None` if the result is empty or rejected by the guard.
+pub fn parse_sweep_response(
+    raw: &str,
+    ctx: &SweepPromptContext,
+    relative_cursor_in_block: usize,
+) -> Option<String> {
     let content = raw
         .trim_end_matches(sweep::ENDOFTEXT)
         .trim_end_matches(sweep::FILE_SEP);
 
-    // Combine prefill with model output to get the full updated code block.
     let updated = format!("{}{}", ctx.prefill, content);
 
     if updated.trim().is_empty() {
-        None
-    } else {
-        Some(updated)
+        return None;
     }
+
+    if is_pure_insertion_above_cursor(
+        &ctx.original_code_block,
+        &updated,
+        relative_cursor_in_block,
+    ) {
+        return None;
+    }
+
+    Some(updated)
 }

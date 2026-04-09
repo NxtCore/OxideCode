@@ -795,6 +795,7 @@ impl NesEngine {
             cursor_col,
             file_content,
             original_file_content,
+            false,
         );
 
         debug!(
@@ -817,7 +818,7 @@ impl NesEngine {
         debug!(raw_len = raw.as_ref().map(|r| r.len()).unwrap_or(0), raw = ?raw, "NES raw response received (sweep)");
 
         let raw = raw?;
-        let new_content = parse_sweep_response(&raw, &ctx)?;
+        let new_content = parse_sweep_response(&raw, &ctx, ctx.relative_cursor_offset)?;
 
         let cursor_byte_offset_in_block = ctx.prefill.len();
         let region = ZetaEditableRegion {
