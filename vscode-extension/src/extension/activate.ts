@@ -65,7 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
 		localServer = new LocalAutocompleteServer();
 	}
 
-	const apiClient = new ApiClient(localServer ?? undefined);
+	const apiClient = new ApiClient(localServer ?? undefined, tracker);
 
 	provider = new InlineEditProvider(
 		tracker,

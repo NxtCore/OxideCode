@@ -1108,11 +1108,7 @@ fn reverse_apply_changes(file_contents: &str, changes: &[RecentChange]) -> Strin
 
 // ─── compute_prefill ─────────────────────────────────────────────────────────
 
-fn compute_prefill(
-    code_block: &str,
-    relative_cursor: usize,
-    changes_above_cursor: bool,
-) -> String {
+fn compute_prefill(code_block: &str, relative_cursor: usize, changes_above_cursor: bool) -> String {
     if changes_above_cursor {
         let pre_cursor = &code_block[..relative_cursor];
         let lines: Vec<&str> = pre_cursor.splitlines_keep_terminator();
@@ -1148,8 +1144,7 @@ fn is_pure_insertion_above_cursor(
         return false;
     }
 
-    let lines_before_cursor: Vec<&str> =
-        code_block[..relative_cursor].splitlines_keep_terminator();
+    let lines_before_cursor: Vec<&str> = code_block[..relative_cursor].splitlines_keep_terminator();
     let current_line_index = lines_before_cursor.len();
 
     let code_block_lines: Vec<&str> = code_block.splitlines_keep_terminator();
@@ -1298,6 +1293,7 @@ pub fn build_sweep_prompt(
     file_contents: &str,
     cursor_position: usize,
     recent_changes: &[RecentChange],
+    extra_recent_changes: Option<&[RecentChange]>,
     retrieval_chunks: Option<&[FileChunk]>,
     file_chunks: Option<&[FileChunk]>,
     changes_above_cursor: bool,
@@ -1365,13 +1361,8 @@ pub fn build_sweep_prompt(
 
     // 6. Build the broad "donut" context (lines around block, excluding block).
     let has_retrieval = retrieval_chunks.map_or(false, |r| !r.is_empty());
-    let initial_file = sweep_get_donut_context(
-        &lines,
-        cursor_line,
-        block_start,
-        block_end,
-        has_retrieval,
-    );
+    let initial_file =
+        sweep_get_donut_context(&lines, cursor_line, block_start, block_end, has_retrieval);
 
     // 7. Format retrieval results.
     let retrieval_results = match retrieval_chunks {
@@ -1389,6 +1380,11 @@ pub fn build_sweep_prompt(
     // 8. Format the recent_changes string for the prompt.
     let recent_changes_str: String = recent_changes
         .iter()
+        .chain(
+            extra_recent_changes
+                .into_iter()
+                .flat_map(|changes| changes.iter()),
+        )
         .map(|c| c.format_for_prompt())
         .collect::<Vec<_>>()
         .join("\n");
@@ -1451,10 +1447,7 @@ pub fn build_sweep_prompt(
 /// the full updated code block.
 ///
 /// Returns `None` if the result is empty or rejected by the insertion guard.
-pub fn parse_sweep_response(
-    raw: &str,
-    ctx: &SweepPromptContext,
-) -> Option<String> {
+pub fn parse_sweep_response(raw: &str, ctx: &SweepPromptContext) -> Option<String> {
     let content = raw
         .trim_end_matches(sweep::ENDOFTEXT)
         .trim_end_matches(sweep::FILE_SEP);

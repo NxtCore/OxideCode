@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 
 use super::delta::EditDelta;
 use super::hint::{HintPosition, NesHint, SelectionRange};
-use super::prompt::{build_nes_prompt, build_sweep_prompt, build_zeta1_prompt, build_zeta2_prompt, parse_sweep_response, parse_zeta1_response, parse_zeta2_response, sweep, zeta1, zeta2, NesModelResponse, RecentChange, ZetaEditableRegion};
+use super::prompt::{build_nes_prompt, build_sweep_prompt, build_zeta1_prompt, build_zeta2_prompt, parse_sweep_response, parse_zeta1_response, parse_zeta2_response, sweep, zeta1, zeta2, FileChunk, NesModelResponse, RecentChange, ZetaEditableRegion};
 use crate::agent::Message;
 use crate::config::{CompletionEndpoint, NesConfig, NesPromptStyle};
 use crate::providers::ProviderDyn;
@@ -867,6 +867,51 @@ impl NesEngine {
             })
             .collect();
 
+        let cross_file_recent_changes: Vec<RecentChange> = recent_edits
+            .iter()
+            .filter(|edit| edit.filepath != cursor_filepath)
+            .filter_map(|edit| {
+                let after_content = &edit.file_content;
+                let after_start = byte_offset_for_line_col(after_content, edit.start_line, edit.start_col);
+                let after_end = (after_start + edit.inserted.len()).min(after_content.len());
+                if after_content.get(after_start..after_end) != Some(edit.inserted.as_str()) {
+                    return None;
+                }
+
+                let before_content = format!(
+                    "{}{}{}",
+                    &after_content[..after_start],
+                    edit.removed,
+                    &after_content[after_end..],
+                );
+                let before_end = (after_start + edit.removed.len()).min(before_content.len());
+
+                let (after_start_line, after_end_line, new_code) =
+                    touched_line_span(after_content, after_start, after_end);
+                let (_, _, old_code) = touched_line_span(&before_content, after_start, before_end);
+
+                Some(RecentChange {
+                    file_path: edit.filepath.clone(),
+                    start_line: after_start_line as u32 + 1,
+                    end_line: after_end_line as u32,
+                    old_code,
+                    new_code,
+                })
+            })
+            .collect();
+
+        let mut seen_cross_file_paths = std::collections::HashSet::new();
+        let cross_file_chunks: Vec<FileChunk> = recent_edits
+            .iter()
+            .rev()
+            .filter(|edit| edit.filepath != cursor_filepath)
+            .filter(|edit| seen_cross_file_paths.insert(edit.filepath.clone()))
+            .map(|edit| FileChunk {
+                file_path: edit.filepath.clone(),
+                content: edit.file_content.clone(),
+            })
+            .collect();
+
         // ── 2. Compute cursor byte offset from (line, col) ──────────────
         let cursor_position = {
             let mut offset = 0usize;
@@ -887,8 +932,9 @@ impl NesEngine {
             file_content,
             cursor_position,
             &recent_changes,
+            Some(&cross_file_recent_changes),
             None,  // retrieval_chunks
-            None,  // file_chunks
+            Some(&cross_file_chunks),
             false, // changes_above_cursor
             None,  // num_lines_before
             None,  // num_lines_after

@@ -306,6 +306,17 @@ export class DocumentTracker implements vscode.Disposable {
 		return this.originalContents.get(uri);
 	}
 
+	getTrackedDocumentContent(filepath: string): string | undefined {
+		const normalizedPath = toUnixPath(filepath);
+		for (const [uri, content] of this.documentContents.entries()) {
+			const documentPath = toUnixPath(vscode.Uri.parse(uri).fsPath);
+			if (documentPath === normalizedPath) {
+				return content;
+			}
+		}
+		return undefined;
+	}
+
 	wasRecentBulkChange(
 		uri: string,
 		options: {

@@ -39,6 +39,7 @@ import {
 	type RecentChange,
 	type UserAction,
 } from "./schemas.ts";
+import type { DocumentTracker } from "~/telemetry/document-tracker.ts";
 
 export interface AutocompleteInput {
 	document: vscode.TextDocument;
@@ -61,9 +62,11 @@ const MAX_DIAGNOSTICS = 50;
 
 export class ApiClient {
 	private localServer: LocalAutocompleteServer | null;
+	private tracker: DocumentTracker | null;
 
-	constructor(localServer?: LocalAutocompleteServer) {
+	constructor(localServer?: LocalAutocompleteServer, tracker?: DocumentTracker) {
 		this.localServer = localServer ?? null;
+		this.tracker = tracker ?? null;
 	}
 
 	/**
@@ -126,6 +129,7 @@ export class ApiClient {
 		// Convert recent changes to NativeEditDelta format
 		const deltas: NativeEditDelta[] = this.convertRecentChangesToDeltas(
 			recentChanges,
+			input.recentBuffers,
 			document,
 		);
 
@@ -181,13 +185,24 @@ export class ApiClient {
 	 */
 	private convertRecentChangesToDeltas(
 		changes: RecentChange[],
+		recentBuffers: AutocompleteInput["recentBuffers"],
 		document: vscode.TextDocument,
 	): NativeEditDelta[] {
 		const deltas: NativeEditDelta[] = [];
 		const now = Date.now();
+		const activePath = this.getRelativePathForUri(document.uri);
+		const contentByPath = new Map<string, string>();
+		contentByPath.set(activePath, document.getText());
+		for (const buffer of recentBuffers) {
+			contentByPath.set(buffer.path, buffer.content);
+		}
 
 		for (const change of changes) {
 			if (!change.diff) continue;
+			const fileContent =
+				this.tracker?.getTrackedDocumentContent(change.path) ??
+				contentByPath.get(change.path);
+			if (!fileContent) continue;
 
 			// Parse unified diff to extract edit information
 			// This is a simplified parser - the Rust core handles more complex diffs
@@ -210,7 +225,7 @@ export class ApiClient {
 						startCol: 0,
 						removed: line.slice(1),
 						inserted: "",
-						fileContent: document.getText(),
+						fileContent,
 						timestampMs: now - changes.indexOf(change) * 100,
 					});
 				} else if (line.startsWith("+") && !line.startsWith("+++")) {
@@ -221,7 +236,7 @@ export class ApiClient {
 						startCol: 0,
 						removed: "",
 						inserted: line.slice(1),
-						fileContent: document.getText(),
+						fileContent,
 						timestampMs: now - changes.indexOf(change) * 100,
 					});
 					lineNum++;
