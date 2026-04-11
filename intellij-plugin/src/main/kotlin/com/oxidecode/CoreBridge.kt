@@ -4,6 +4,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import java.io.File
 import java.nio.file.Files
+import java.util.UUID
 
 /**
  * Singleton service that loads the native Rust library and exposes
@@ -45,10 +46,13 @@ class CoreBridge {
         filepath: String,
         completionEndpoint: String,
         promptStyle: String,
+        requestId: String,
     ): String
 
     // Expose a native init hook to configure tracing from the JVM side.
     external fun initLogging()
+
+	external fun cancelRequest(requestId: String)
 
     // ── NES ───────────────────────────────────────────────────────────────
 
@@ -76,7 +80,10 @@ class CoreBridge {
         completionEndpoint: String,
         originalFileContent: String,
         calibrationLogDir: String,
+        requestId: String,
     ): String
+
+    fun newRequestId(prefix: String): String = "$prefix-${UUID.randomUUID()}"
 
     companion object {
         private val LOG: Logger = Logger.getInstance(CoreBridge::class.java)

@@ -41,6 +41,7 @@ class OxideCompletionContributor : CompletionContributor() {
         val language = detectLanguageId(project, document)
 
         val bridge = service<CoreBridge>()
+        val requestId = bridge.newRequestId("ij-completion")
 
         val completion = runCatching {
             bridge.getCompletion(
@@ -54,6 +55,7 @@ class OxideCompletionContributor : CompletionContributor() {
                 filepath = filepath,
                 completionEndpoint = settings.completionEndpoint,
                 promptStyle = settings.nesPromptStyle,
+                requestId = requestId,
             )
         }.getOrNull()
 

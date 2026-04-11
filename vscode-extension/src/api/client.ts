@@ -10,6 +10,7 @@ import {
 	type ProviderConfig,
 } from "~/core/config.ts";
 import {
+	cancelNativeRequest,
 	isNativeAvailable,
 	type NativeEditDelta,
 	nativePredictNextEdit,
@@ -105,12 +106,22 @@ export class ApiClient {
 	 */
 	private async getAutocompleteNative(
 		input: AutocompleteInput,
-		_signal?: AbortSignal,
+		signal?: AbortSignal,
 	): Promise<AutocompleteResult[] | null> {
 		const { document, position, originalContent, recentChanges } = input;
 		const documentText = document.getText();
 		const filePath = toUnixPath(document.uri.fsPath) || "untitled";
 		const language = document.languageId;
+		const requestId = `native-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+		if (signal?.aborted) {
+			return null;
+		}
+
+		const abortHandler = () => {
+			cancelNativeRequest(requestId);
+		};
+		signal?.addEventListener("abort", abortHandler, { once: true });
 
 		// Convert recent changes to NativeEditDelta format
 		const deltas: NativeEditDelta[] = this.convertRecentChangesToDeltas(
@@ -139,8 +150,13 @@ export class ApiClient {
 				documentText,
 				language,
 				originalContent,
+				requestId,
 				config.calibrationLogDir,
 			);
+
+			if (signal?.aborted) {
+				return null;
+			}
 
 			if (!hint) {
 				return null;
@@ -155,6 +171,8 @@ export class ApiClient {
 		} catch (error) {
 			console.error("[OxideCode] Native autocomplete failed:", error);
 			return null;
+		} finally {
+			signal?.removeEventListener("abort", abortHandler);
 		}
 	}
 

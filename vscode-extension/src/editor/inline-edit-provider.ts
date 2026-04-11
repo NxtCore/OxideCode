@@ -74,6 +74,7 @@ export class InlineEditProvider implements vscode.InlineCompletionItemProvider {
 	): Promise<vscode.InlineCompletionList | undefined> {
 		const requestId = ++this.requestCounter;
 		this.latestRequestId = requestId;
+		this.clearSuggestionQueue("superseded by new request");
 		this.cancelInFlightRequest("superseded by new request");
 
 		if (!config.enabled) return undefined;

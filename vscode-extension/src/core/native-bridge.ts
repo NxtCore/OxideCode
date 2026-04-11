@@ -84,6 +84,7 @@ export interface NativeNesHint {
  */
 interface NativeModule {
 	initLogging(): void;
+	cancelRequest(requestId: string): void;
 	getCompletion(
 		providerConfig: NativeProviderConfig,
 		ctx: NativeCompletionContext,
@@ -98,6 +99,7 @@ interface NativeModule {
 		fileContent: string,
 		language: string,
 		originalFileContent: string | undefined,
+		requestId: string,
 	): Promise<NativeNesHint | null>;
 }
 
@@ -297,6 +299,7 @@ export async function nativePredictNextEdit(
 	fileContent: string,
 	language: string,
 	originalFileContent: string | undefined,
+	requestId: string,
 	calibrationLogDir?: string,
 ): Promise<NativeNesHint | null> {
 	const mod = tryLoadNativeModule();
@@ -321,10 +324,22 @@ export async function nativePredictNextEdit(
 			fileContent,
 			language,
 			originalFileContent,
+			requestId,
 		);
 	} catch (e) {
 		console.error("[OxideCode] Native predictNextEdit failed:", e);
 		return null;
+	}
+}
+
+export function cancelNativeRequest(requestId: string): void {
+	const mod = tryLoadNativeModule();
+	if (!mod) return;
+
+	try {
+		mod.cancelRequest(requestId);
+	} catch (e) {
+		console.error("[OxideCode] Native cancelRequest failed:", e);
 	}
 }
 

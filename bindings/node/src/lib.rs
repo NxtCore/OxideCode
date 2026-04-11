@@ -1,6 +1,9 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -11,6 +14,40 @@ use oxidecode_core::{
     providers::OmniProvider,
 };
 
+static ACTIVE_REQUESTS: Lazy<Mutex<HashMap<String, CancellationToken>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn register_request(request_id: &str, cancel: CancellationToken) {
+    ACTIVE_REQUESTS
+        .lock()
+        .expect("request registry poisoned")
+        .insert(request_id.to_string(), cancel);
+}
+
+fn unregister_request(request_id: &str) {
+    ACTIVE_REQUESTS
+        .lock()
+        .expect("request registry poisoned")
+        .remove(request_id);
+}
+
+struct RequestGuard {
+    request_id: String,
+}
+
+impl RequestGuard {
+    fn new(request_id: String, cancel: CancellationToken) -> Self {
+        register_request(&request_id, cancel);
+        Self { request_id }
+    }
+}
+
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        unregister_request(&self.request_id);
+    }
+}
+
 /// Initialise the tracing subscriber once.
 #[napi]
 pub fn init_logging() {
@@ -18,6 +55,17 @@ pub fn init_logging() {
         .with_env_filter("oxidecode=debug")
         .try_init();
     debug!("OxideCode tracing initialised");
+}
+
+#[napi]
+pub fn cancel_request(request_id: String) {
+    if let Some(token) = ACTIVE_REQUESTS
+        .lock()
+        .expect("request registry poisoned")
+        .remove(&request_id)
+    {
+        token.cancel();
+    }
 }
 
 // ─── Shared config ───────────────────────────────────────────────────────────
@@ -165,6 +213,7 @@ pub async fn predict_next_edit(
     // Pre-edit snapshot of the file, used by the Sweep prompt style for the
     // top-level context chunk.  Pass `null`/`undefined` for other styles.
     original_file_content: Option<String>,
+    request_id: String,
 ) -> Result<Option<JsNesHint>> {
     let prompt_style = parse_prompt_style(nes_config.prompt_style.as_deref());
 
@@ -211,6 +260,7 @@ pub async fn predict_next_edit(
     }
 
     let cancel = CancellationToken::new();
+    let _request_guard = RequestGuard::new(request_id, cancel.clone());
     let hint = engine
         .predict(
             &cursor_filepath,

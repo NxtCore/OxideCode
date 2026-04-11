@@ -94,6 +94,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     private val bridge get() = service<CoreBridge>()
     private val tracker get() = service<NesSessionTracker>()
     private var debounceJob: Job? = null
+    private var inFlightRequestId: String? = null
 
     companion object {
         private val LOG = Logger.getInstance(NesDocumentListener::class.java)
@@ -101,6 +102,9 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
 
     override fun documentChanged(event: DocumentEvent) {
         if (!settings.nesEnabled) return
+
+        inFlightRequestId?.let(bridge::cancelRequest)
+        inFlightRequestId = null
 
         val removed = if (event.oldLength > 0) event.oldFragment.toString() else ""
         val inserted = event.newFragment.toString()
@@ -143,6 +147,8 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
             val requestContext = withContext(Dispatchers.Main) {
                 buildRequestContext()
             } ?: return@launch
+            val requestId = bridge.newRequestId("ij-nes")
+            inFlightRequestId = requestId
 
             val startTime = System.currentTimeMillis()
             val result = runCatching {
@@ -161,19 +167,28 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     completionEndpoint = settings.completionEndpoint,
                     originalFileContent = requestContext.originalContent,
                     calibrationLogDir = settings.calibrationLogDir,
+                    requestId = requestId,
                 )
             }.getOrNull()
             val elapsed = System.currentTimeMillis() - startTime
             LOG.debug("NES predictNextEdit completed in ${elapsed}ms")
 
+            if (inFlightRequestId != requestId) return@launch
+
             if (!result.isNullOrBlank()) {
                 val hint = runCatching { Json.decodeFromString<NesHint>(result) }.getOrNull()
                 if (hint != null) {
                     withContext(Dispatchers.Main) {
+                        if (inFlightRequestId != requestId) return@withContext
                         if (buildRequestContext() == null) return@withContext
                         NesHintManager.show(editor, hint)
+                        if (inFlightRequestId == requestId) {
+                            inFlightRequestId = null
+                        }
                     }
                 }
+            } else if (inFlightRequestId == requestId) {
+                inFlightRequestId = null
             }
         }
     }

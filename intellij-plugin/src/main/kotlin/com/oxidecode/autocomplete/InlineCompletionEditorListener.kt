@@ -51,6 +51,7 @@ private class InlineCompletionDocumentListener(
     private val bridge get() = service<CoreBridge>()
 
     private var debounceJob: Job? = null
+    private var inFlightRequestId: String? = null
 
     override fun documentChanged(event: DocumentEvent) {
         scheduleCompletion()
@@ -62,6 +63,8 @@ private class InlineCompletionDocumentListener(
 
     fun dispose() {
         debounceJob?.cancel()
+        inFlightRequestId?.let(bridge::cancelRequest)
+        inFlightRequestId = null
         scope.cancel()
         InlineCompletionManager.dismiss(editor)
         editor.caretModel.removeCaretListener(this)
@@ -70,6 +73,8 @@ private class InlineCompletionDocumentListener(
 
     private fun scheduleCompletion() {
         InlineCompletionManager.dismiss(editor)
+        inFlightRequestId?.let(bridge::cancelRequest)
+        inFlightRequestId = null
 
         if (!settings.autocompleteEnabled) return
         if (settings.isAutocompleteSnoozed()) return
@@ -92,6 +97,8 @@ private class InlineCompletionDocumentListener(
         debounceJob?.cancel()
         debounceJob = scope.launch {
             delay(AUTOCOMPLETE_DEBOUNCE_MS)
+            val requestId = bridge.newRequestId("ij-autocomplete")
+            inFlightRequestId = requestId
 
             val completion = runCatching {
                 bridge.getCompletion(
@@ -105,15 +112,22 @@ private class InlineCompletionDocumentListener(
                     filepath = filepath,
                     completionEndpoint = settings.completionEndpoint,
                     promptStyle = settings.nesPromptStyle,
+                    requestId = requestId,
                 )
             }.getOrNull()?.takeUnless { it.isBlank() } ?: return@launch
+
+            if (inFlightRequestId != requestId) return@launch
 
             ApplicationManager.getApplication().invokeLater {
                 if (version != requestVersion.get()) return@invokeLater
                 if (editor.document.modificationStamp != modificationStamp) return@invokeLater
                 if (editor.caretModel.offset != offset) return@invokeLater
+                if (inFlightRequestId != requestId) return@invokeLater
 
                 InlineCompletionManager.show(editor, offset, completion)
+                if (inFlightRequestId == requestId) {
+                    inFlightRequestId = null
+                }
             }
         }
     }

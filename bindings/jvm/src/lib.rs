@@ -1,7 +1,10 @@
 use jni::objects::{JClass, JString};
 use jni::sys::{jint, jstring};
 use jni::JNIEnv;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -13,6 +16,40 @@ use oxidecode_core::{
     nes::{EditDelta, NesEngine},
     providers::OmniProvider,
 };
+
+static ACTIVE_REQUESTS: Lazy<Mutex<HashMap<String, CancellationToken>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn register_request(request_id: &str, cancel: CancellationToken) {
+    ACTIVE_REQUESTS
+        .lock()
+        .expect("request registry poisoned")
+        .insert(request_id.to_string(), cancel);
+}
+
+fn unregister_request(request_id: &str) {
+    ACTIVE_REQUESTS
+        .lock()
+        .expect("request registry poisoned")
+        .remove(request_id);
+}
+
+struct RequestGuard {
+    request_id: String,
+}
+
+impl RequestGuard {
+    fn new(request_id: String, cancel: CancellationToken) -> Self {
+        register_request(&request_id, cancel);
+        Self { request_id }
+    }
+}
+
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        unregister_request(&self.request_id);
+    }
+}
 
 /// Lazily-initialised single-threaded Tokio runtime for JNI calls.
 fn runtime() -> &'static Runtime {
@@ -47,6 +84,26 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_initLogging(mut _env: JNIEn
     debug!("OxideCode tracing initialised (JNI)");
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_oxidecode_CoreBridge_cancelRequest(
+    mut env: JNIEnv,
+    _class: JClass,
+    request_id: JString,
+) {
+    let request_id: String = match env.get_string(&request_id) {
+        Ok(value) => value.into(),
+        Err(_) => return,
+    };
+
+    if let Some(token) = ACTIVE_REQUESTS
+        .lock()
+        .expect("request registry poisoned")
+        .remove(&request_id)
+    {
+        token.cancel();
+    }
+}
+
 // ─── Completion ──────────────────────────────────────────────────────────────
 
 /// `OxideCore.getCompletion(baseUrl, apiKey, model, completionModel, prefix, suffix, language, filepath, completionEndpoint, promptStyle) -> String`
@@ -64,6 +121,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
     filepath: JString,
     completion_endpoint: JString,
     prompt_style: JString,
+    request_id: JString,
 ) -> jstring {
     let base_url: String = env.get_string(&base_url).unwrap().into();
     let api_key: String = env.get_string(&api_key).unwrap().into();
@@ -75,6 +133,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
     let filepath: String = env.get_string(&filepath).unwrap().into();
     let completion_endpoint: String = env.get_string(&completion_endpoint).unwrap().into();
     let prompt_style: String = env.get_string(&prompt_style).unwrap().into();
+    let request_id: String = env.get_string(&request_id).unwrap().into();
 
     let api_key_opt = if api_key.is_empty() {
         None
@@ -126,6 +185,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
     );
 
     let cancel = CancellationToken::new();
+    let _request_guard = RequestGuard::new(request_id, cancel.clone());
     let result = runtime().block_on(engine.complete(ctx, cancel, |_chunk| {
         debug!("completion chunk received");
     }));
@@ -160,6 +220,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     completion_endpoint: JString,
     original_file_content: JString,
     calibration_log_dir: JString,
+    request_id: JString,
 ) -> jstring {
     let base_url: String = env.get_string(&base_url).unwrap().into();
     let api_key: String = env.get_string(&api_key).unwrap().into();
@@ -173,6 +234,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     let completion_endpoint: String = env.get_string(&completion_endpoint).unwrap().into();
     let original_file_content: String = env.get_string(&original_file_content).unwrap().into();
     let calibration_log_dir: String = env.get_string(&calibration_log_dir).unwrap().into();
+    let request_id: String = env.get_string(&request_id).unwrap().into();
 
     let original_file_content_opt: Option<&str> = if original_file_content.is_empty() {
         None
@@ -237,6 +299,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     }
 
     let cancel = CancellationToken::new();
+    let _request_guard = RequestGuard::new(request_id, cancel.clone());
     let hint = runtime().block_on(engine.predict(
         &cursor_filepath,
         cursor_line as u32,
