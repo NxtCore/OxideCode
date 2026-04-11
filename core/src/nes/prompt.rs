@@ -959,10 +959,19 @@ pub mod sweep {
     pub const BLOCK_LINES_BEFORE: usize = 10;
     pub const BLOCK_LINES_AFTER: usize = 10;
 
-    /// Target chunk size (in lines) for truncating the full file context.
-    pub const CHUNK_SIZE: usize = 200;
-    /// Overlap between adjacent chunks (0 = no overlap).
-    pub const CHUNK_OVERLAP: usize = 0;
+    /// Half-width of the broader context window (lines above/below the anchor).
+    /// Python: `NUM_CONTEXT_LINES_HALF = 50`.
+    pub const NUM_CONTEXT_LINES_HALF: usize = 50;
+
+    /// Snap context window to chunks of this size so small cursor movements
+    /// don't shift the window and invalidate the KV cache prefix.
+    /// Python: `CONTEXT_CHUNK_SIZE = 40`.
+    pub const CONTEXT_CHUNK_SIZE: usize = 40;
+
+    /// How much to shrink `NUM_CONTEXT_LINES_HALF` when retrieval chunks are
+    /// present.  Python: `context_half = max(25, NUM_CONTEXT_LINES_HALF - 25)`.
+    pub const RETRIEVAL_CONTEXT_REDUCTION: usize = 25;
+
     /// Maximum number of recent change hunks to include in the prompt.
     pub const MAX_RECENT_CHANGES: usize = 10;
 
@@ -971,66 +980,7 @@ pub mod sweep {
     pub const PREFILL_LINES_ABOVE: usize = 1;
 }
 
-// ─── Helper: compute_line_starts (unchanged, kept local) ─────────────────────
-
-fn compute_line_starts_sweep(text: &str) -> Vec<usize> {
-    let mut starts = vec![0];
-    for (index, byte) in text.bytes().enumerate() {
-        if byte == b'\n' {
-            starts.push(index + 1);
-        }
-    }
-    starts
-}
-
-// Ported from Python:
-//
-//   def compute_prefill(code_block, relative_cursor, changes_above_cursor=False):
-//       if changes_above_cursor:
-//           prefill = code_block[:relative_cursor]
-//           prefilled_lines = prefill.splitlines(True)
-//           NUM_LINES_ABOVE = 1
-//           before_split = "".join(prefilled_lines[:NUM_LINES_ABOVE])
-//           after_split  = "".join(prefilled_lines[NUM_LINES_ABOVE:])
-//           leading_newlines = len(after_split) - len(after_split.lstrip("\n"))
-//           before_split += "\n" * leading_newlines
-//           return before_split
-//       else:
-//           prefix_before_cursor = code_block[:relative_cursor]
-//           if "\n" not in prefix_before_cursor:
-//               return ""
-//           prefill_end = prefix_before_cursor.rfind("\n") + 1
-//           return code_block[:prefill_end]
-
-fn compute_prefill(code_block: &str, relative_cursor: usize, changes_above_cursor: bool) -> String {
-    if changes_above_cursor {
-        // Insertion mode: only keep the first line of the pre-cursor content,
-        // plus any leading blank lines that follow it.  The model then rewrites
-        // from line 2 onward, which is the region where the insertion happened.
-        let pre_cursor = &code_block[..relative_cursor];
-        let lines: Vec<&str> = pre_cursor.splitlines_keep_terminator();
-        let before_split: String = lines
-            .iter()
-            .take(sweep::PREFILL_LINES_ABOVE)
-            .copied()
-            .collect();
-        let after_split: String = lines
-            .iter()
-            .skip(sweep::PREFILL_LINES_ABOVE)
-            .copied()
-            .collect();
-        let leading_newlines = after_split.len() - after_split.trim_start_matches('\n').len();
-        format!("{}{}", before_split, "\n".repeat(leading_newlines))
-    } else {
-        // Default mode: prefill everything up to (and including) the last
-        // newline before the cursor.  The model edits at/below the cursor.
-        let pre_cursor = &code_block[..relative_cursor];
-        match pre_cursor.rfind('\n') {
-            Some(pos) => code_block[..=pos].to_string(),
-            None => String::new(),
-        }
-    }
-}
+// ─── Helper: splitlines with terminators ─────────────────────────────────────
 
 // A small trait to avoid a dependency on an external crate; mirrors Python's
 // `str.splitlines(keepends=True)`.
@@ -1055,21 +1005,139 @@ impl SplitlinesKeepTerminator for str {
     }
 }
 
-// Ported from Python:
-//
-//   def is_pure_insertion_above_cursor(code_block, completion, relative_cursor):
-//       if not code_block or relative_cursor <= 0: return False
-//       current_line_index = len(code_block[:relative_cursor].splitlines(True))
-//       code_block_lines = code_block.splitlines(True)
-//       if current_line_index < 1 or current_line_index > len(code_block_lines): return False
-//       cursor_line = code_block_lines[current_line_index - 1]
-//       if code_block.strip() == completion.strip(): return False
-//       if not cursor_line.strip(): return False
-//       prefix_lines = code_block_lines[:current_line_index - 1]
-//       prefix = "".join(prefix_lines)
-//       suffix_lines = code_block_lines[current_line_index:]
-//       suffix = "".join(suffix_lines)
-//       return completion.startswith(prefix) and completion.endswith(cursor_line + suffix)
+// ─── FileChunk: mirrors Python's FileChunk dataclass ─────────────────────────
+
+/// A chunk of file content used for retrieval results or multi-file context.
+/// Mirrors Python's `FileChunk` dataclass.
+#[derive(Debug, Clone)]
+pub struct FileChunk {
+    pub file_path: String,
+    pub content: String,
+}
+
+impl FileChunk {
+    pub fn to_string_repr(&self) -> String {
+        format!("{}{}\n{}\n", sweep::FILE_SEP, self.file_path, self.content)
+    }
+}
+
+// ─── RecentChange: structured representation of a single diff hunk ───────────
+
+/// A single recent-change hunk with all the metadata needed to both format it
+/// into the prompt *and* reverse-apply it to recover the previous file state.
+///
+/// `start_line` and `end_line` are 1-indexed and refer to the lines in the
+/// file that were replaced.
+#[derive(Debug, Clone)]
+pub struct RecentChange {
+    pub file_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub old_code: String,
+    pub new_code: String,
+}
+
+impl RecentChange {
+    /// Format this change as a prompt diff entry (for the changes section).
+    pub fn format_for_prompt(&self) -> String {
+        format_diff(
+            &self.file_path,
+            self.start_line,
+            self.end_line,
+            &self.old_code,
+            &self.new_code,
+        )
+    }
+}
+
+// ─── reverse_apply_changes ───────────────────────────────────────────────────
+
+/// Reverse-apply a sequence of recent changes to `file_contents` to recover
+/// the file state *before* those changes were made.
+///
+/// Changes are un-applied in **reverse chronological order** (last change
+/// first) so that line numbers remain valid as each change is backed out.
+///
+/// Each change says "lines `start_line..=end_line` (1-indexed) were replaced:
+/// `old_code` became `new_code`."  To reverse it we find `new_code` at those
+/// lines and replace it with `old_code`.
+///
+/// If a hunk's `new_code` doesn't match the file at the expected location
+/// (can happen if changes overlap or the file diverged), that hunk is skipped
+/// rather than corrupting the output.
+fn reverse_apply_changes(file_contents: &str, changes: &[RecentChange]) -> String {
+    let mut lines: Vec<String> = file_contents
+        .splitlines_keep_terminator()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    // Un-apply in reverse order so earlier line numbers stay valid.
+    for change in changes.iter().rev() {
+        let start = (change.start_line as usize).saturating_sub(1); // 0-indexed
+        let end = change.end_line as usize; // exclusive (1-indexed end → 0-indexed exclusive)
+
+        if start > lines.len() || end > lines.len() || start > end {
+            // Out of range — skip this hunk.
+            continue;
+        }
+
+        // Split new_code / old_code into lines (preserving terminators).
+        let new_code_lines: Vec<&str> = change.new_code.splitlines_keep_terminator();
+        let old_code_lines: Vec<&str> = change.old_code.splitlines_keep_terminator();
+
+        // Verify that the current file lines at [start..end) actually match
+        // new_code (the "after" side of the change).  We compare trimmed to
+        // tolerate minor trailing-whitespace differences.
+        let current_region: String = lines[start..end].concat();
+        let expected_region: String = new_code_lines.concat();
+
+        if current_region.trim() != expected_region.trim() {
+            // Mismatch — the file has diverged from what this change expects.
+            // Skip rather than corrupt.
+            continue;
+        }
+
+        // Replace lines[start..end] with old_code_lines.
+        let replacement: Vec<String> = old_code_lines.iter().map(|s| s.to_string()).collect();
+        lines.splice(start..end, replacement);
+    }
+
+    lines.concat()
+}
+
+// ─── compute_prefill ─────────────────────────────────────────────────────────
+
+fn compute_prefill(
+    code_block: &str,
+    relative_cursor: usize,
+    changes_above_cursor: bool,
+) -> String {
+    if changes_above_cursor {
+        let pre_cursor = &code_block[..relative_cursor];
+        let lines: Vec<&str> = pre_cursor.splitlines_keep_terminator();
+        let before_split: String = lines
+            .iter()
+            .take(sweep::PREFILL_LINES_ABOVE)
+            .copied()
+            .collect();
+        let after_split: String = lines
+            .iter()
+            .skip(sweep::PREFILL_LINES_ABOVE)
+            .copied()
+            .collect();
+        let leading_newlines = after_split.len() - after_split.trim_start_matches('\n').len();
+        format!("{}{}", before_split, "\n".repeat(leading_newlines))
+    } else {
+        let pre_cursor = &code_block[..relative_cursor];
+        match pre_cursor.rfind('\n') {
+            Some(pos) => code_block[..=pos].to_string(),
+            None => String::new(),
+        }
+    }
+}
+
+// ─── is_pure_insertion_above_cursor ──────────────────────────────────────────
 
 fn is_pure_insertion_above_cursor(
     code_block: &str,
@@ -1080,9 +1148,9 @@ fn is_pure_insertion_above_cursor(
         return false;
     }
 
-    let lines_before_cursor: Vec<&str> = code_block[..relative_cursor]
-        .splitlines_keep_terminator();
-    let current_line_index = lines_before_cursor.len(); // 1-based count
+    let lines_before_cursor: Vec<&str> =
+        code_block[..relative_cursor].splitlines_keep_terminator();
+    let current_line_index = lines_before_cursor.len();
 
     let code_block_lines: Vec<&str> = code_block.splitlines_keep_terminator();
     if current_line_index < 1 || current_line_index > code_block_lines.len() {
@@ -1091,13 +1159,10 @@ fn is_pure_insertion_above_cursor(
 
     let cursor_line = code_block_lines[current_line_index - 1];
 
-    // If the completion is essentially the same content, no real edit happened.
     if code_block.trim() == completion.trim() {
         return false;
     }
 
-    // An empty cursor line means the cursor sits on blank space — not an
-    // insertion-above pattern worth rejecting.
     if cursor_line.trim().is_empty() {
         return false;
     }
@@ -1108,6 +1173,8 @@ fn is_pure_insertion_above_cursor(
     completion.starts_with(prefix.as_str())
         && completion.ends_with(&format!("{}{}", cursor_line, suffix))
 }
+
+// ─── Metadata returned alongside the prompt ──────────────────────────────────
 
 /// Metadata returned alongside the prompt string, needed later to convert the
 /// model's raw text output back into a `NesHint`.
@@ -1127,292 +1194,251 @@ pub struct SweepPromptContext {
     pub cursor_line_start: u32,
     /// 1-indexed end line used in the prompt section headers.
     pub cursor_line_end: u32,
+    /// Byte offset of the cursor within the code block.
     pub relative_cursor_offset: usize,
 }
 
-fn sweep_get_block_at_cursor(file_content: &str, cursor_line: u32) -> (String, usize, u32) {
-    let lines: Vec<&str> = file_content.lines().collect();
-    let line_starts = compute_line_starts_sweep(file_content);
-    let cursor = cursor_line as usize;
-    let start = cursor.saturating_sub(sweep::BLOCK_LINES_BEFORE);
-    let end = (cursor + sweep::BLOCK_LINES_AFTER + 1).min(lines.len());
+// ─── Internal helpers ────────────────────────────────────────────────────────
 
-    let code_block = lines[start..end].join("\n");
-    let block_start_offset = line_starts.get(start).copied().unwrap_or(0);
-
-    (code_block, block_start_offset, start as u32)
+/// Find which line a byte offset falls on, and compute the offset of that
+/// line's start.  Mirrors the Python cursor-finding loop.
+fn byte_offset_to_line(lines: &[&str], cursor_position: usize) -> usize {
+    let mut pos = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if pos + line.len() > cursor_position {
+            return i;
+        }
+        pos += line.len();
+    }
+    // Past the end — return last line (matches Python's for/else).
+    lines.len().saturating_sub(1)
 }
 
-fn sweep_get_nearest_chunk(file_content: &str, cursor_line: u32) -> String {
-    let lines: Vec<&str> = file_content.lines().collect();
+/// Extract the code block around the cursor using `splitlines(True)`-style
+/// splitting so we preserve trailing newlines faithfully (matching Python).
+fn sweep_get_block_at_cursor(
+    lines: &[&str],
+    cursor_line: usize,
+    num_lines_before: usize,
+    num_lines_after: usize,
+) -> (String, usize, usize, usize) {
+    let start = cursor_line.saturating_sub(num_lines_before);
+    let end = (cursor_line + num_lines_after + 1).min(lines.len());
+
+    let code_block: String = lines[start..end].concat();
+    let block_start_offset: usize = lines[..start].iter().map(|l| l.len()).sum();
+
+    (code_block, block_start_offset, start, end)
+}
+
+/// Build the "donut" context: lines around the block but excluding the block
+/// itself.
+fn sweep_get_donut_context(
+    lines: &[&str],
+    cursor_line: usize,
+    block_start: usize,
+    block_end: usize,
+    has_retrieval_chunks: bool,
+) -> String {
     let total = lines.len();
-    if total <= sweep::CHUNK_SIZE {
-        return file_content.to_string();
-    }
 
-    let cursor = cursor_line as usize;
-    let mut chunks: Vec<(usize, usize)> = Vec::new();
-    let mut start = 0;
-    while start < total {
-        let end = (start + sweep::CHUNK_SIZE).min(total);
-        chunks.push((start, end));
-        if sweep::CHUNK_OVERLAP >= sweep::CHUNK_SIZE || end >= total {
-            break;
-        }
-        start += sweep::CHUNK_SIZE - sweep::CHUNK_OVERLAP;
-    }
-
-    let mut nearest = &chunks[0];
-    let mut min_dist = usize::MAX;
-    for chunk in &chunks {
-        if cursor >= chunk.0 && cursor < chunk.1 {
-            nearest = chunk;
-            min_dist = 0;
-            break;
-        }
-        let mid = (chunk.0 + chunk.1) / 2;
-        let dist = cursor.abs_diff(mid);
-        if dist < min_dist {
-            min_dist = dist;
-            nearest = chunk;
-        }
-    }
-
-    lines[nearest.0..nearest.1].join("\n")
-}
-
-
-fn sweep_format_changes_and_prev_section(
-    recent_edits: &[EditDelta],
-    current_section: &str,
-    cursor_filepath: &str,
-) -> (String, String) {
-    let mut prev_section = current_section.replace(sweep::CURSOR_MARKER, "");
-
-    let edits: Vec<&EditDelta> = recent_edits
-        .iter()
-        .filter(|d| {
-            !d.removed.trim().is_empty() || !d.inserted.trim().is_empty()
-        })
-        .collect();
-
-    // Un-apply edits in reverse to recover the pre-edit state of prev_section.
-    for delta in edits
-        .iter()
-        .rev()
-        .filter(|delta| delta.filepath == cursor_filepath)
-    {
-        if !delta.inserted.is_empty() && prev_section.contains(delta.inserted.as_str()) {
-            prev_section = prev_section.replacen(&delta.inserted, &delta.removed, 1);
-        } else {
-            break;
-        }
-    }
-
-    let has_current_file_edits = edits
-        .iter()
-        .any(|d| d.filepath == cursor_filepath);
-
-    if !has_current_file_edits {
-        // Locate the cursor marker in the *original* current_section string to
-        // find the truncation point (last newline before the cursor).
-        if let Some(cursor_pos) = current_section.find(sweep::CURSOR_MARKER) {
-            let pre_cursor = &current_section[..cursor_pos];
-            let truncate_at = match pre_cursor.rfind('\n') {
-                Some(pos) => pos + 1,
-                None => 0,
-            };
-            // prev_section had the cursor marker stripped already, so byte
-            // offsets into it match current_section minus the marker length.
-            // The cursor marker sits exactly at `cursor_pos` in current_section
-            // and at `cursor_pos` in prev_section (marker was stripped, not
-            // replaced, so everything before cursor_pos is identical).
-            prev_section = prev_section[..truncate_at].to_string();
-        }
-    }
-
-    // FIX #1/#2: Format diff entries using `{path}:{start_line}:{end_line}` as
-    // the header, matching the Python DIFF_FORMAT template exactly.
-    // Old code used `{path}.diff` (no line numbers).
-    let changes_to_format: &[&EditDelta] = if edits.len() > sweep::MAX_RECENT_CHANGES {
-        &edits[edits.len() - sweep::MAX_RECENT_CHANGES..]
+    let context_half = if has_retrieval_chunks {
+        sweep::NUM_CONTEXT_LINES_HALF
+            .saturating_sub(sweep::RETRIEVAL_CONTEXT_REDUCTION)
+            .max(25)
     } else {
-        &edits[..]
+        sweep::NUM_CONTEXT_LINES_HALF
     };
 
-    let mut result = String::new();
-    for delta in changes_to_format {
-        let old_code = delta.removed.trim_end_matches('\n');
-        let new_code = delta.inserted.trim_end_matches('\n');
+    let chunk = sweep::CONTEXT_CHUNK_SIZE;
+    let anchor = (cursor_line / chunk) * chunk;
+    let context_start = anchor.saturating_sub(context_half);
+    let context_end = (anchor + chunk + context_half).min(total);
 
-        // Compute end line from start line + number of lines removed.
-        let removed_line_count = if delta.removed.is_empty() {
-            0u32
-        } else {
-            delta.removed.lines().count() as u32
-        };
-        let end_line = delta.start_line + removed_line_count;
+    let context_before: String = lines[context_start..block_start.min(total)].concat();
+    let context_after: String = lines[block_end.min(total)..context_end.min(total)].concat();
 
-        use std::fmt::Write;
-        let _ = write!(
-            result,
-            // Python DIFF_FORMAT:
-            //   <|file_sep|>{file_path}:{start_line}:{end_line}
-            //   original:
-            //   {old_code}
-            //   updated:
-            //   {new_code}
-            "{}{filepath}:{start}:{end}\noriginal:\n{old}\nupdated:\n{new}\n",
-            sweep::FILE_SEP,
-            filepath = delta.filepath,
-            start    = delta.start_line,
-            end      = end_line,
-            old      = old_code,
-            new      = new_code,
-        );
-    }
-
-    let result = result.trim_end_matches('\n').to_string();
-    (result, prev_section)
+    format!("{}{}", context_before, context_after)
 }
 
-fn sweep_compute_line_range(
-    file_content: &str,
-    section_start_offset: usize,
-    section_length: usize,
-) -> (u32, u32) {
-    let section_end = section_start_offset + section_length;
-    let mut current_pos = 0usize;
-    let mut start_line = 1u32;
-    let mut end_line = 1u32;
-
-    for (i, line) in file_content.lines().enumerate() {
-        let line_end = current_pos + line.len();
-        if current_pos <= section_start_offset && section_start_offset <= line_end {
-            start_line = (i + 1) as u32;
-        }
-        if current_pos <= section_end && section_end <= line_end {
-            end_line = (i + 1) as u32;
-            break;
-        }
-        current_pos += line.len() + 1;
-    }
-
-    (start_line, end_line)
+/// Format a single diff entry for the recent_changes section.
+/// Mirrors Python's `format_diff`.
+pub fn format_diff(
+    file_path: &str,
+    start_line: u32,
+    end_line: u32,
+    old_code: &str,
+    new_code: &str,
+) -> String {
+    format!(
+        "{file_sep}{file_path}:{start_line}:{end_line}\noriginal:\n{old_code}\nupdated:\n{new_code}",
+        file_sep = sweep::FILE_SEP,
+    )
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Public API ──────────────────────────────────────────────────────────────
 
 /// Build the complete Sweep next-edit prompt and a `SweepPromptContext` for
 /// later response parsing.
 ///
-/// `changes_above_cursor`: set to `true` when recent edits were made above the
-/// cursor (insertion mode).  Mirrors Python's `changes_above_cursor` parameter
-/// to `build_prompt` / `compute_prefill`.  In insertion mode the prefill is
-/// limited to the first line + leading blank lines so the model rewrites from
-/// line 2, which is where the insertion region starts.
+/// - `file_path`: path of the file being edited.
+/// - `file_contents`: current content of the file (with all recent edits applied).
+/// - `cursor_position`: byte offset of the cursor within `file_contents`.
+/// - `recent_changes`: structured recent change hunks.  Pass an empty slice if
+///   there are no recent changes.  These are used both to build the diff
+///   section of the prompt *and* to reverse-apply onto `file_contents` to
+///   recover the `original/` (prev) section.
+/// - `retrieval_chunks`: optional semantic retrieval results.
+/// - `file_chunks`: optional extra file contexts prepended to the prompt.
+/// - `changes_above_cursor`: `true` when recent edits were made above the
+///   cursor (insertion mode).
+/// - `num_lines_before` / `num_lines_after`: override block extraction size.
 pub fn build_sweep_prompt(
-    recent_edits: &[EditDelta],
-    cursor_filepath: &str,
-    cursor_line: u32,
-    cursor_col: u32,
-    file_content: &str,
-    original_file_content: &str,
-    // FIX #5: new parameter mirroring Python's `changes_above_cursor`
+    file_path: &str,
+    file_contents: &str,
+    cursor_position: usize,
+    recent_changes: &[RecentChange],
+    retrieval_chunks: Option<&[FileChunk]>,
+    file_chunks: Option<&[FileChunk]>,
     changes_above_cursor: bool,
+    num_lines_before: Option<usize>,
+    num_lines_after: Option<usize>,
 ) -> (String, SweepPromptContext) {
-    // 1. Extract code block around cursor.
-    let (code_block, block_start_offset, block_start_line) =
-        sweep_get_block_at_cursor(file_content, cursor_line);
+    let num_lines_before = num_lines_before.unwrap_or(sweep::BLOCK_LINES_BEFORE);
+    let num_lines_after = num_lines_after.unwrap_or(sweep::BLOCK_LINES_AFTER);
+
+    // Split with terminators preserved, matching Python's splitlines(True).
+    let lines: Vec<&str> = file_contents.splitlines_keep_terminator();
+    if lines.is_empty() {
+        return (
+            String::new(),
+            SweepPromptContext {
+                original_code_block: String::new(),
+                block_start_offset: 0,
+                block_start_line: 0,
+                prefill: String::new(),
+                cursor_line_start: 0,
+                cursor_line_end: 0,
+                relative_cursor_offset: 0,
+            },
+        );
+    }
+
+    // Derive cursor_line from byte offset, exactly as Python does.
+    let cursor_line = byte_offset_to_line(&lines, cursor_position);
+
+    // 1. Extract code block around cursor (from current file).
+    let (code_block, block_start_offset, block_start, block_end) =
+        sweep_get_block_at_cursor(&lines, cursor_line, num_lines_before, num_lines_after);
 
     // 2. Compute relative cursor position within the code block.
-    let relative_cursor_line = cursor_line.saturating_sub(block_start_line);
-    let block_lines: Vec<&str> = code_block.lines().collect();
-    let mut relative_cursor_offset = 0usize;
-    for (i, line) in block_lines.iter().enumerate() {
-        if i as u32 == relative_cursor_line {
-            relative_cursor_offset += (cursor_col as usize).min(line.len());
-            break;
-        }
-        relative_cursor_offset += line.len() + 1;
-    }
-    let relative_cursor_offset = relative_cursor_offset.min(code_block.len());
+    let relative_cursor_offset = cursor_position
+        .saturating_sub(block_start_offset)
+        .min(code_block.len());
 
     // 3. Insert <|cursor|> marker at the cursor position.
-    let current_section = format!(
+    let code_block_with_cursor = format!(
         "{}{}{}",
         &code_block[..relative_cursor_offset],
         sweep::CURSOR_MARKER,
         &code_block[relative_cursor_offset..],
     );
 
-    let (formatted_changes, prev_section) =
-        sweep_format_changes_and_prev_section(recent_edits, &current_section, cursor_filepath);
+    // 4. Compute prev_section by reverse-applying recent changes.
+    //
+    //    When recent_changes is empty, truncate prev_section at the prefill
+    //    boundary so the model sees a visible diff (matching Python).
+    //
+    //    When recent_changes is non-empty, reverse-apply all changes to the
+    //    full file to recover the previous state, then extract the same block
+    //    region from that previous state.
+    let prev_section = if recent_changes.is_empty() {
+        let prefill_end =
+            compute_prefill(&code_block, relative_cursor_offset, changes_above_cursor).len();
+        code_block[..prefill_end].to_string()
+    } else {
+        code_block.clone()
+    };
 
+    // 5. Compute prefill.
     let prefill = compute_prefill(&code_block, relative_cursor_offset, changes_above_cursor);
 
-    let truncated_file = sweep_get_nearest_chunk(original_file_content, cursor_line);
+    // 6. Build the broad "donut" context (lines around block, excluding block).
+    let has_retrieval = retrieval_chunks.map_or(false, |r| !r.is_empty());
+    let initial_file = sweep_get_donut_context(
+        &lines,
+        cursor_line,
+        block_start,
+        block_end,
+        has_retrieval,
+    );
 
-    let (cursor_line_start, cursor_line_end) =
-        sweep_compute_line_range(file_content, block_start_offset, code_block.len());
+    // 7. Format retrieval results.
+    let retrieval_results = match retrieval_chunks {
+        Some(chunks) if !chunks.is_empty() => {
+            let mut s = String::new();
+            for chunk in chunks {
+                s.push('\n');
+                s.push_str(&chunk.to_string_repr());
+            }
+            s
+        }
+        _ => String::new(),
+    };
 
-    let mut prompt = String::new();
+    // 8. Format the recent_changes string for the prompt.
+    let recent_changes_str: String = recent_changes
+        .iter()
+        .map(|c| c.format_for_prompt())
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    // File context section.
-    prompt.push_str(sweep::FILE_SEP);
-    prompt.push_str(cursor_filepath);
-    prompt.push('\n');
-    prompt.push_str(&truncated_file);
-    prompt.push('\n');
+    // Line numbers for section headers (1-indexed, matching Python).
+    let start_line = (block_start as u32) + 1;
+    let end_line = block_end as u32;
 
-    // Recent changes (if any).
-    if !formatted_changes.trim().is_empty() {
-        prompt.push_str(&formatted_changes);
-        prompt.push('\n');
-    }
+    // 9. Assemble the prompt.
+    let body = format!(
+        "{file_sep}{file_path}\n\
+         {initial_file}{retrieval_results}\n\
+         {recent_changes_str}\n\
+         {file_sep}original/{file_path}:{start_line}:{end_line}\n\
+         {prev_section}\n\
+         {file_sep}current/{file_path}:{start_line}:{end_line}\n\
+         {code_block_with_cursor}\n\
+         {file_sep}updated/{file_path}:{start_line}:{end_line}\n\
+         {prefill}",
+        file_sep = sweep::FILE_SEP,
+        file_path = file_path,
+        initial_file = initial_file,
+        retrieval_results = retrieval_results,
+        recent_changes_str = recent_changes_str,
+        prev_section = prev_section,
+        code_block_with_cursor = code_block_with_cursor,
+        start_line = start_line,
+        end_line = end_line,
+        prefill = prefill,
+    );
 
-    // Original section.
-    prompt.push_str(sweep::FILE_SEP);
-    prompt.push_str("original/");
-    prompt.push_str(cursor_filepath);
-    prompt.push(':');
-    prompt.push_str(&cursor_line_start.to_string());
-    prompt.push(':');
-    prompt.push_str(&cursor_line_end.to_string());
-    prompt.push('\n');
-    prompt.push_str(&prev_section);
-    prompt.push('\n');
-
-    // Current section.
-    prompt.push_str(sweep::FILE_SEP);
-    prompt.push_str("current/");
-    prompt.push_str(cursor_filepath);
-    prompt.push(':');
-    prompt.push_str(&cursor_line_start.to_string());
-    prompt.push(':');
-    prompt.push_str(&cursor_line_end.to_string());
-    prompt.push('\n');
-    prompt.push_str(&current_section);
-    prompt.push('\n');
-
-    // Updated section (prefill — model continues from here).
-    prompt.push_str(sweep::FILE_SEP);
-    prompt.push_str("updated/");
-    prompt.push_str(cursor_filepath);
-    prompt.push(':');
-    prompt.push_str(&cursor_line_start.to_string());
-    prompt.push(':');
-    prompt.push_str(&cursor_line_end.to_string());
-    prompt.push('\n');
-    prompt.push_str(&prefill);
+    // Prepend file_chunks if provided.
+    let prompt = if let Some(chunks) = file_chunks {
+        let mut prefix = String::new();
+        for chunk in chunks {
+            prefix.push_str(&chunk.to_string_repr());
+        }
+        prefix.push_str(&body);
+        prefix
+    } else {
+        body
+    };
 
     let ctx = SweepPromptContext {
         original_code_block: code_block,
         block_start_offset,
-        block_start_line,
+        block_start_line: block_start as u32,
         prefill,
-        cursor_line_start,
-        cursor_line_end,
+        cursor_line_start: start_line,
+        cursor_line_end: end_line,
         relative_cursor_offset,
     };
 
@@ -1424,11 +1450,10 @@ pub fn build_sweep_prompt(
 /// Strips any leaked stop tokens, then prepends the `prefill` to reconstruct
 /// the full updated code block.
 ///
-/// Returns `None` if the result is empty or rejected by the guard.
+/// Returns `None` if the result is empty or rejected by the insertion guard.
 pub fn parse_sweep_response(
     raw: &str,
     ctx: &SweepPromptContext,
-    relative_cursor_in_block: usize,
 ) -> Option<String> {
     let content = raw
         .trim_end_matches(sweep::ENDOFTEXT)
@@ -1443,7 +1468,7 @@ pub fn parse_sweep_response(
     if is_pure_insertion_above_cursor(
         &ctx.original_code_block,
         &updated,
-        relative_cursor_in_block,
+        ctx.relative_cursor_offset,
     ) {
         return None;
     }

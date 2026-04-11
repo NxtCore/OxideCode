@@ -57,8 +57,9 @@ internal class InlineGhostTextRenderer(
 ) : EditorCustomElementRenderer {
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val metrics = inlay.editor.contentComponent.getFontMetrics(font(inlay))
+        val displayText = expandTabs(text, tabSize(inlay))
         val hintWidth = if (showHint) hintWidth(metrics) else 0
-        return (metrics.stringWidth(text) + hintWidth).coerceAtLeast(1)
+        return (metrics.stringWidth(displayText) + hintWidth).coerceAtLeast(1)
     }
 
     override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) {
@@ -67,18 +68,19 @@ internal class InlineGhostTextRenderer(
         g2.font = font(inlay)
         val metrics = g2.getFontMetrics(g2.font)
         val baseline = targetRegion.y + inlay.editor.ascent
+        val displayText = expandTabs(text, tabSize(inlay))
 
         g2.color = ghostColor()
-        g2.drawString(text, targetRegion.x, baseline)
+         g2.drawString(displayText, targetRegion.x, baseline)
 
         if (showHint) {
-            drawSweepHint(inlay, g2, targetRegion, metrics)
+            drawSweepHint(inlay, g2, targetRegion, metrics, displayText)
         }
 
         g2.dispose()
     }
 
-    private fun drawSweepHint(inlay: Inlay<*>, g2: Graphics2D, targetRegion: Rectangle, metrics: FontMetrics) {
+    private fun drawSweepHint(inlay: Inlay<*>, g2: Graphics2D, targetRegion: Rectangle, metrics: FontMetrics, displayText: String) {
         val originalFont = g2.font
         val hintFont = Font(Font.SANS_SERIF, Font.PLAIN, (font(inlay).size - 1).coerceAtLeast(1))
         g2.font = hintFont
@@ -92,7 +94,7 @@ internal class InlineGhostTextRenderer(
         val iconGap = JBUI.scale(4)
         val spaceBetweenTabAndAccept = 2
         val baselineY = targetRegion.y + inlay.editor.ascent
-        val tabX = targetRegion.x + metrics.stringWidth(text) + marginBetweenTextAndHint
+        val tabX = targetRegion.x + metrics.stringWidth(displayText) + marginBetweenTextAndHint
         val tabY = baselineY - tabHeight + 2
         val horizontalPadding = 4
 
@@ -122,6 +124,8 @@ internal class InlineGhostTextRenderer(
 
     private fun font(inlay: Inlay<*>): Font = inlay.editor.colorsScheme.getFont(EditorFontType.PLAIN)
 
+    private fun tabSize(inlay: Inlay<*>): Int = inlay.editor.settings.getTabSize(inlay.editor.project).coerceAtLeast(1)
+
     private fun hintText(): String {
         val action = ActionManager.getInstance().getAction("oxidecode.acceptNes")
         val shortcutText = action?.let(KeymapUtil::getFirstKeyboardShortcutText)
@@ -148,7 +152,8 @@ internal class BlockGhostTextRenderer(
 
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val metrics = inlay.editor.contentComponent.getFontMetrics(font(inlay))
-        val widest = lines.maxOfOrNull { metrics.stringWidth(it) } ?: 0
+        val tabSize = tabSize(inlay)
+        val widest = lines.maxOfOrNull { metrics.stringWidth(expandTabs(it, tabSize)) } ?: 0
         return widest.coerceAtLeast(1)
     }
 
@@ -160,10 +165,11 @@ internal class BlockGhostTextRenderer(
         g2.font = font(inlay)
         val metrics = g2.getFontMetrics(g2.font)
         g2.color = if (JBColor.isBright()) JBColor.GRAY else withAlpha(FOREGROUND, 0.8f)
+        val tabSize = tabSize(inlay)
 
         for ((index, line) in lines.withIndex()) {
             val baseline = targetRegion.y + ((index + 1) * inlay.editor.lineHeight) - metrics.descent
-            g2.drawString(line, targetRegion.x, baseline)
+            g2.drawString(expandTabs(line, tabSize), targetRegion.x, baseline)
         }
 
         g2.dispose()
@@ -171,10 +177,31 @@ internal class BlockGhostTextRenderer(
 
     private fun font(inlay: Inlay<*>): Font = inlay.editor.colorsScheme.getFont(EditorFontType.PLAIN)
 
+    private fun tabSize(inlay: Inlay<*>): Int = inlay.editor.settings.getTabSize(inlay.editor.project).coerceAtLeast(1)
+
     private fun withAlpha(color: Color, alpha: Float): Color =
         Color(color.red, color.green, color.blue, (255 * alpha).toInt().coerceIn(0, 255))
 
     private companion object {
         val FOREGROUND = JBColor(Color(0x333333), Color(0xC8CCD4))
     }
+}
+
+private fun expandTabs(text: String, tabSize: Int): String {
+    val normalizedTabSize = tabSize.coerceAtLeast(1)
+    val result = StringBuilder(text.length)
+    var column = 0
+    for (char in text) {
+        if (char == '\t') {
+            val spacesToAdd = normalizedTabSize - (column % normalizedTabSize)
+            repeat(spacesToAdd) {
+                result.append(' ')
+                column += 1
+            }
+        } else {
+            result.append(char)
+            column += 1
+        }
+    }
+    return result.toString()
 }

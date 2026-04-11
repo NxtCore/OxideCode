@@ -9,11 +9,7 @@ use tracing::{debug, info, warn};
 
 use super::delta::EditDelta;
 use super::hint::{HintPosition, NesHint, SelectionRange};
-use super::prompt::{
-    build_nes_prompt, build_sweep_prompt, build_zeta1_prompt, build_zeta2_prompt,
-    parse_sweep_response, parse_zeta1_response, parse_zeta2_response, sweep, zeta1, zeta2,
-    NesModelResponse, ZetaEditableRegion,
-};
+use super::prompt::{build_nes_prompt, build_sweep_prompt, build_zeta1_prompt, build_zeta2_prompt, parse_sweep_response, parse_zeta1_response, parse_zeta2_response, sweep, zeta1, zeta2, NesModelResponse, RecentChange, ZetaEditableRegion};
 use crate::agent::Message;
 use crate::config::{CompletionEndpoint, NesConfig, NesPromptStyle};
 use crate::providers::ProviderDyn;
@@ -260,6 +256,46 @@ fn select_best_hunk(hunks: Vec<DiffHunk>, cursor_offset: usize) -> Option<DiffHu
             hunk.new_range.start,
         )
     })
+}
+
+fn byte_offset_for_line_col(text: &str, line: u32, col: u32) -> usize {
+    let mut offset = 0usize;
+    for (i, segment) in text.split_inclusive('\n').enumerate() {
+        if i == line as usize {
+            let visible_len = segment.strip_suffix('\n').map_or(segment.len(), str::len);
+            return offset + (col as usize).min(visible_len);
+        }
+        offset += segment.len();
+    }
+    offset.min(text.len())
+}
+
+fn touched_line_span(text: &str, start: usize, end: usize) -> (usize, usize, String) {
+    let ranges = line_ranges(text);
+    if ranges.is_empty() {
+        return (0, 0, String::new());
+    }
+
+    let clamped_start = start.min(text.len());
+    let clamped_end = end.min(text.len());
+    let anchor = if clamped_end > clamped_start {
+        clamped_end - 1
+    } else {
+        clamped_start
+    };
+
+    let start_line = ranges
+        .iter()
+        .position(|range| clamped_start <= range.end)
+        .unwrap_or(ranges.len().saturating_sub(1));
+    let end_line_inclusive = ranges
+        .iter()
+        .position(|range| anchor < range.end)
+        .unwrap_or(ranges.len().saturating_sub(1));
+    let end_line_exclusive = end_line_inclusive + 1;
+    let byte_range = line_span_to_byte_range(&ranges, text.len(), start_line, end_line_exclusive);
+
+    (start_line, end_line_exclusive, text[byte_range].to_string())
 }
 
 fn offset_to_line_col(text: &str, offset: usize) -> (u32, u32) {
@@ -788,26 +824,88 @@ impl NesEngine {
         original_file_content: &str,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
+        let recent_changes: Vec<RecentChange> = recent_edits
+            .iter()
+            .filter_map(|edit| {
+                // Only include edits for the current file.
+                if edit.filepath != cursor_filepath {
+                    return None;
+                }
+
+                let after_content = &edit.file_content;
+                let after_start = byte_offset_for_line_col(after_content, edit.start_line, edit.start_col);
+                let after_end = (after_start + edit.inserted.len()).min(after_content.len());
+                if after_content.get(after_start..after_end) != Some(edit.inserted.as_str()) {
+                    return None;
+                }
+
+                let before_content = format!(
+                    "{}{}{}",
+                    &after_content[..after_start],
+                    edit.removed,
+                    &after_content[after_end..],
+                );
+                let before_end = (after_start + edit.removed.len()).min(before_content.len());
+
+                let (after_start_line, after_end_line, new_code) =
+                    touched_line_span(after_content, after_start, after_end);
+                let (_, _, old_code) = touched_line_span(&before_content, after_start, before_end);
+
+                let start_line_1 = after_start_line as u32 + 1;
+                let end_line_1 = after_end_line as u32;
+
+                // Convert to 1-indexed line numbers for RecentChange.
+                // Use the after-state range for start/end since that's what
+                // reverse_apply_changes will look for in the current file.
+                Some(RecentChange {
+                    file_path: edit.filepath.clone(),
+                    start_line: start_line_1,
+                    end_line: end_line_1,
+                    old_code,
+                    new_code,
+                })
+            })
+            .collect();
+
+        // ── 2. Compute cursor byte offset from (line, col) ──────────────
+        let cursor_position = {
+            let mut offset = 0usize;
+            for (i, line) in file_content.split_inclusive('\n').enumerate() {
+                if i == cursor_line as usize {
+                    let visible_len = line.strip_suffix('\n').map_or(line.len(), str::len);
+                    offset += (cursor_col as usize).min(visible_len);
+                    break;
+                }
+                offset += line.len();
+            }
+            offset
+        };
+
+        // ── 3. Call the new build_sweep_prompt ────────────────────────────
         let (prompt, ctx) = build_sweep_prompt(
-            recent_edits,
             cursor_filepath,
-            cursor_line,
-            cursor_col,
             file_content,
-            original_file_content,
-            false,
+            cursor_position,
+            &recent_changes,
+            None,  // retrieval_chunks
+            None,  // file_chunks
+            false, // changes_above_cursor
+            None,  // num_lines_before
+            None,  // num_lines_after
         );
 
+        // ── Everything below is unchanged ────────────────────────────────
+
         debug!(
-            filepath = cursor_filepath,
-            cursor_line,
-            cursor_col,
-            block_start_line = ctx.block_start_line,
-            cursor_line_start = ctx.cursor_line_start,
-            cursor_line_end = ctx.cursor_line_end,
-            prefill_len = ctx.prefill.len(),
-            "NES Sweep prompt assembled"
-        );
+        filepath = cursor_filepath,
+        cursor_line,
+        cursor_col,
+        block_start_line = ctx.block_start_line,
+        cursor_line_start = ctx.cursor_line_start,
+        cursor_line_end = ctx.cursor_line_end,
+        prefill_len = ctx.prefill.len(),
+        "NES Sweep prompt assembled"
+    );
         debug!("raw prompt" = %prompt);
 
         let stop_tokens: Vec<String> =
@@ -818,7 +916,7 @@ impl NesEngine {
         debug!(raw_len = raw.as_ref().map(|r| r.len()).unwrap_or(0), raw = ?raw, "NES raw response received (sweep)");
 
         let raw = raw?;
-        let new_content = parse_sweep_response(&raw, &ctx, ctx.relative_cursor_offset)?;
+        let new_content = parse_sweep_response(&raw, &ctx)?;
 
         let cursor_byte_offset_in_block = ctx.prefill.len();
         let region = ZetaEditableRegion {
