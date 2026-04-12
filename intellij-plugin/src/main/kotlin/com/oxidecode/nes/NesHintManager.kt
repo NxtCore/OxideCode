@@ -434,6 +434,7 @@ data class EditDelta(
     val filepath: String,
     val startLine: Int,
     val startCol: Int,
+    val startOffset: Int,
     val removed: String,
     val inserted: String,
     val fileContent: String,

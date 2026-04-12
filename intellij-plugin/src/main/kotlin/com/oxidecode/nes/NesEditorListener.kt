@@ -95,9 +95,14 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     private val tracker get() = service<NesSessionTracker>()
     private var debounceJob: Job? = null
     private var inFlightRequestId: String? = null
+    private var previousContentBeforeChange: String? = null
 
     companion object {
         private val LOG = Logger.getInstance(NesDocumentListener::class.java)
+    }
+
+    override fun beforeDocumentChange(event: DocumentEvent) {
+        previousContentBeforeChange = event.document.immutableCharSequence.toString()
     }
 
     override fun documentChanged(event: DocumentEvent) {
@@ -116,7 +121,8 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         val startPos = editor.offsetToLogicalPosition(offset)
         val now = System.currentTimeMillis()
         val currentContent = document.text
-        val previousContent = buildPreviousContent(currentContent, event)
+        val previousContent = previousContentBeforeChange ?: buildPreviousContent(currentContent, event)
+        previousContentBeforeChange = null
 
         tracker.recordChange(
             filepath = filepath,
@@ -137,6 +143,13 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
             NesHintManager.dismiss(editor)
             schedulePredict()
         }
+    }
+
+    private fun buildPreviousContent(currentContent: String, event: DocumentEvent): String {
+        val prefix = currentContent.substring(0, event.offset)
+        val suffixStart = (event.offset + event.newLength).coerceAtMost(currentContent.length)
+        val suffix = currentContent.substring(suffixStart)
+        return prefix + event.oldFragment + suffix
     }
 
     private fun schedulePredict() {
@@ -247,13 +260,6 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         if (tracker.wasRecentBulkChange(filepath, 1_500L, 200, 8)) return "recent bulk edit"
 
         return null
-    }
-
-    private fun buildPreviousContent(currentContent: String, event: DocumentEvent): String {
-        val prefix = currentContent.substring(0, event.offset)
-        val suffixStart = (event.offset + event.newLength).coerceAtMost(currentContent.length)
-        val suffix = currentContent.substring(suffixStart)
-        return prefix + event.oldFragment + suffix
     }
 }
 

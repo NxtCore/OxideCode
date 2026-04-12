@@ -374,6 +374,7 @@ struct CalibrationEdit {
     filepath: String,
     start_line: u32,
     start_col: u32,
+    start_offset: Option<usize>,
     removed: String,
     inserted: String,
 }
@@ -417,6 +418,7 @@ fn calibration_log(
             filepath: d.filepath.clone(),
             start_line: d.start_line,
             start_col: d.start_col,
+            start_offset: d.start_offset,
             removed: d.removed.clone(),
             inserted: d.inserted.clone(),
         })
@@ -833,7 +835,9 @@ impl NesEngine {
                 }
 
                 let text = &edit.file_content;
-                let start_offset = byte_offset_for_line_col(text, edit.start_line, edit.start_col);
+                let start_offset = edit
+                    .start_offset
+                    .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
 
                 let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
                 let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
@@ -877,6 +881,7 @@ impl NesEngine {
                     end_line: end_line_1,
                     old_code,
                     new_code,
+                    timestamp_ms: edit.timestamp_ms,
                 })
             })
             .take(sweep::MAX_RECENT_CHANGES)
@@ -890,7 +895,9 @@ impl NesEngine {
             .filter(|edit| edit.filepath != cursor_filepath)
             .filter_map(|edit| {
                 let text = &edit.file_content;
-                let start_offset = byte_offset_for_line_col(text, edit.start_line, edit.start_col);
+                let start_offset = edit
+                    .start_offset
+                    .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
 
                 let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
                 let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
@@ -931,6 +938,7 @@ impl NesEngine {
                     end_line: after_end_line as u32 + 1,
                     old_code,
                     new_code,
+                    timestamp_ms: edit.timestamp_ms,
                 })
             })
             .take(sweep::MAX_RECENT_CHANGES)

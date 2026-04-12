@@ -27,6 +27,7 @@ private data class PendingEditDelta(
         filepath = filepath,
         startLine = startLine,
         startCol = startCol,
+        startOffset = startOffset,
         removed = removed,
         inserted = inserted,
         fileContent = fileContent,

@@ -1035,6 +1035,7 @@ pub struct RecentChange {
     pub end_line: u32,
     pub old_code: String,
     pub new_code: String,
+    pub timestamp_ms: u64,
 }
 
 impl RecentChange {
@@ -1382,13 +1383,16 @@ pub fn build_sweep_prompt(
     };
 
     // 8. Format the recent_changes string for the prompt.
-    let recent_changes_str: String = recent_changes
-        .iter()
-        .chain(
-            extra_recent_changes
-                .into_iter()
-                .flat_map(|changes| changes.iter()),
-        )
+    let mut prompt_changes: Vec<&RecentChange> = recent_changes.iter().collect();
+    prompt_changes.extend(
+        extra_recent_changes
+            .into_iter()
+            .flat_map(|changes| changes.iter()),
+    );
+    prompt_changes.sort_by_key(|change| change.timestamp_ms);
+
+    let recent_changes_str: String = prompt_changes
+        .into_iter()
         .map(|c| c.format_for_prompt())
         .collect::<Vec<_>>()
         .join("\n");

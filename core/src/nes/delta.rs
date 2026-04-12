@@ -18,6 +18,8 @@ pub struct EditDelta {
     pub start_line: u32,
     /// 0-indexed column where the edit starts.
     pub start_col: u32,
+    /// Exact byte offset where the edit starts in the pre/post-change text.
+    pub start_offset: Option<usize>,
     /// Text that was removed (empty string for pure insertions).
     pub removed: String,
     /// Text that was inserted (empty string for pure deletions).
