@@ -1353,7 +1353,11 @@ pub fn build_sweep_prompt(
             compute_prefill(&code_block, relative_cursor_offset, changes_above_cursor).len();
         code_block[..prefill_end].to_string()
     } else {
-        code_block.clone()
+        let original_file = reverse_apply_changes(file_contents, recent_changes);
+        let orig_lines: Vec<&str> = original_file.splitlines_keep_terminator();
+        let (orig_block, _, _, _) =
+            sweep_get_block_at_cursor(&orig_lines, cursor_line, num_lines_before, num_lines_after);
+        orig_block
     };
 
     // 5. Compute prefill.

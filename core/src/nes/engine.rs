@@ -827,36 +827,51 @@ impl NesEngine {
         let recent_changes: Vec<RecentChange> = recent_edits
             .iter()
             .filter_map(|edit| {
-                // Only include edits for the current file.
                 if edit.filepath != cursor_filepath {
                     return None;
                 }
 
-                let after_content = &edit.file_content;
-                let after_start = byte_offset_for_line_col(after_content, edit.start_line, edit.start_col);
-                let after_end = (after_start + edit.inserted.len()).min(after_content.len());
-                if after_content.get(after_start..after_end) != Some(edit.inserted.as_str()) {
-                    return None;
-                }
+                let text = &edit.file_content;
+                let start_offset = byte_offset_for_line_col(text, edit.start_line, edit.start_col);
 
-                let before_content = format!(
-                    "{}{}{}",
-                    &after_content[..after_start],
-                    edit.removed,
-                    &after_content[after_end..],
-                );
-                let before_end = (after_start + edit.removed.len()).min(before_content.len());
+                // Determine if `text` is the state BEFORE or AFTER the edit.
+                let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
+                let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
+
+                let before_end_calc = (start_offset + edit.removed.len()).min(text.len());
+                let is_before_state = text.get(start_offset..before_end_calc) == Some(edit.removed.as_str());
+
+                let (before_content, after_content) = if is_after_state {
+                    let before = format!(
+                        "{}{}{}",
+                        &text[..start_offset],
+                        edit.removed,
+                        &text[after_end_calc..],
+                    );
+                    (before, text.clone())
+                } else if is_before_state {
+                    let after = format!(
+                        "{}{}{}",
+                        &text[..start_offset],
+                        edit.inserted,
+                        &text[before_end_calc..],
+                    );
+                    (text.clone(), after)
+                } else {
+                    // Mismatch: Text has diverged or offset is incorrect
+                    return None;
+                };
+
+                let actual_after_end = start_offset + edit.inserted.len();
+                let actual_before_end = start_offset + edit.removed.len();
 
                 let (after_start_line, after_end_line, new_code) =
-                    touched_line_span(after_content, after_start, after_end);
-                let (_, _, old_code) = touched_line_span(&before_content, after_start, before_end);
+                    touched_line_span(&after_content, start_offset, actual_after_end);
+                let (_, _, old_code) = touched_line_span(&before_content, start_offset, actual_before_end);
 
                 let start_line_1 = after_start_line as u32 + 1;
-                let end_line_1 = after_end_line as u32;
+                let end_line_1 = after_end_line as u32 + 1; // FIX: Make end line 1-indexed (inclusive)
 
-                // Convert to 1-indexed line numbers for RecentChange.
-                // Use the after-state range for start/end since that's what
-                // reverse_apply_changes will look for in the current file.
                 Some(RecentChange {
                     file_path: edit.filepath.clone(),
                     start_line: start_line_1,
@@ -871,29 +886,46 @@ impl NesEngine {
             .iter()
             .filter(|edit| edit.filepath != cursor_filepath)
             .filter_map(|edit| {
-                let after_content = &edit.file_content;
-                let after_start = byte_offset_for_line_col(after_content, edit.start_line, edit.start_col);
-                let after_end = (after_start + edit.inserted.len()).min(after_content.len());
-                if after_content.get(after_start..after_end) != Some(edit.inserted.as_str()) {
-                    return None;
-                }
+                let text = &edit.file_content;
+                let start_offset = byte_offset_for_line_col(text, edit.start_line, edit.start_col);
 
-                let before_content = format!(
-                    "{}{}{}",
-                    &after_content[..after_start],
-                    edit.removed,
-                    &after_content[after_end..],
-                );
-                let before_end = (after_start + edit.removed.len()).min(before_content.len());
+                let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
+                let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
+
+                let before_end_calc = (start_offset + edit.removed.len()).min(text.len());
+                let is_before_state = text.get(start_offset..before_end_calc) == Some(edit.removed.as_str());
+
+                let (before_content, after_content) = if is_after_state {
+                    let before = format!(
+                        "{}{}{}",
+                        &text[..start_offset],
+                        edit.removed,
+                        &text[after_end_calc..],
+                    );
+                    (before, text.clone())
+                } else if is_before_state {
+                    let after = format!(
+                        "{}{}{}",
+                        &text[..start_offset],
+                        edit.inserted,
+                        &text[before_end_calc..],
+                    );
+                    (text.clone(), after)
+                } else {
+                    return None;
+                };
+
+                let actual_after_end = start_offset + edit.inserted.len();
+                let actual_before_end = start_offset + edit.removed.len();
 
                 let (after_start_line, after_end_line, new_code) =
-                    touched_line_span(after_content, after_start, after_end);
-                let (_, _, old_code) = touched_line_span(&before_content, after_start, before_end);
+                    touched_line_span(&after_content, start_offset, actual_after_end);
+                let (_, _, old_code) = touched_line_span(&before_content, start_offset, actual_before_end);
 
                 Some(RecentChange {
                     file_path: edit.filepath.clone(),
                     start_line: after_start_line as u32 + 1,
-                    end_line: after_end_line as u32,
+                    end_line: after_end_line as u32 + 1, // FIX: Make end line 1-indexed (inclusive)
                     old_code,
                     new_code,
                 })
