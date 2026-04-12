@@ -824,8 +824,9 @@ impl NesEngine {
         original_file_content: &str,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
-        let recent_changes: Vec<RecentChange> = recent_edits
+        let mut recent_changes: Vec<RecentChange> = recent_edits
             .iter()
+            .rev()
             .filter_map(|edit| {
                 if edit.filepath != cursor_filepath {
                     return None;
@@ -834,7 +835,6 @@ impl NesEngine {
                 let text = &edit.file_content;
                 let start_offset = byte_offset_for_line_col(text, edit.start_line, edit.start_col);
 
-                // Determine if `text` is the state BEFORE or AFTER the edit.
                 let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
                 let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
 
@@ -858,7 +858,6 @@ impl NesEngine {
                     );
                     (text.clone(), after)
                 } else {
-                    // Mismatch: Text has diverged or offset is incorrect
                     return None;
                 };
 
@@ -870,7 +869,7 @@ impl NesEngine {
                 let (_, _, old_code) = touched_line_span(&before_content, start_offset, actual_before_end);
 
                 let start_line_1 = after_start_line as u32 + 1;
-                let end_line_1 = after_end_line as u32 + 1; // FIX: Make end line 1-indexed (inclusive)
+                let end_line_1 = after_end_line as u32 + 1;
 
                 Some(RecentChange {
                     file_path: edit.filepath.clone(),
@@ -880,10 +879,14 @@ impl NesEngine {
                     new_code,
                 })
             })
+            .take(sweep::MAX_RECENT_CHANGES)
             .collect();
 
-        let cross_file_recent_changes: Vec<RecentChange> = recent_edits
+        recent_changes.reverse();
+
+        let mut cross_file_recent_changes: Vec<RecentChange> = recent_edits
             .iter()
+            .rev()
             .filter(|edit| edit.filepath != cursor_filepath)
             .filter_map(|edit| {
                 let text = &edit.file_content;
@@ -925,12 +928,15 @@ impl NesEngine {
                 Some(RecentChange {
                     file_path: edit.filepath.clone(),
                     start_line: after_start_line as u32 + 1,
-                    end_line: after_end_line as u32 + 1, // FIX: Make end line 1-indexed (inclusive)
+                    end_line: after_end_line as u32 + 1,
                     old_code,
                     new_code,
                 })
             })
+            .take(sweep::MAX_RECENT_CHANGES)
             .collect();
+
+        cross_file_recent_changes.reverse();
 
         let mut seen_cross_file_paths = std::collections::HashSet::new();
         let cross_file_chunks: Vec<FileChunk> = recent_edits
