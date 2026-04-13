@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package dev.sweep.assistant.data;
+
+enum ProtoMessageRole {
+    MESSAGE_ROLE_SYSTEM = 0;
+    MESSAGE_ROLE_USER = 1;
+    MESSAGE_ROLE_ASSISTANT = 2;
+}
+
+message ProtoFileInfo {
+    string name = 1;
+    string relative_path = 2;
+    message Span {
+        int32 start = 1;
+        int32 end = 2;
+    }
+    optional Span span = 3;
+    optional string codeSnippet = 4;
+    optional string score = 5;
+}
+
+message ProtoFullFileContentStore {
+    string name = 1;
+    string relative_path = 2;
+    message Span {
+        int32 start = 1;
+        int32 end = 2;
+    }
+    optional Span span = 3;
+    optional string code_snippet = 4;
+    optional int64 timestamp = 5;
+    bool is_from_string_replace = 6;
+    optional string conversation_id = 7;
+    bool is_from_create_file = 8;
+}
+
+message ProtoCodeReplacement {
+    int32 code_block_index = 1;
+    string file_path = 2;
+    string code_block_content = 3;
+    map<string, string> diffs_to_apply = 4;
+    string apply_id = 5;
+}
+
+message ProtoTokenUsage {
+    int32 input_tokens = 1;
+    int32 output_tokens = 2;
+    int32 cache_read_tokens = 3;
+    int32 cache_write_tokens = 4;
+    string model = 5;
+    int32 max_tokens = 6;
+}
+
+message ProtoAnnotations {
+    repeated ProtoCodeReplacement code_replacements = 1;
+    repeated ToolCall tool_calls = 2;
+    repeated CompletedToolCall completed_tool_calls = 3;
+    string thinking = 4;
+    string stop_streaming = 5;
+    string action_plan = 6;
+    optional int32 cursor_line_number = 7;
+    optional string cursor_line_content = 8;
+    map<string, string> last_diff = 9;
+    repeated string mentioned_files = 10;
+    optional ProtoTokenUsage token_usage = 11;
+    optional int64 completion_time = 12;
+}
+
+message ToolCall {
+    string tool_call_id = 1;
+    string tool_name = 2;
+    map<string, string> tool_parameters = 3;
+    string raw_text = 4;
+    bool is_mcp = 5;
+    map<string, string> mcp_properties = 6;
+    bool fully_formed = 7;
+    string thought_signature = 8;
+}
+
+message FileLocation {
+    string file_path = 1;
+    optional int32 line_number = 2;
+    bool is_directory = 3;
+}
+
+message TodoItem {
+    string id = 1;
+    string content = 2;
+    string status = 3;
+}
+
+message CompletedToolCall {
+    string tool_call_id = 1;
+    string tool_name = 2;
+    string result_string = 3;
+    bool status = 4;
+    bool is_mcp = 5;
+    map<string, string> mcp_properties = 6;
+    repeated FileLocation file_locations = 7;
+    optional string error_type = 8;
+    optional string notebook_edit_old_cell = 9;
+    repeated TodoItem todo_state = 10;
+}
+
+message ProtoImage {
+    string file_type = 1;
+    optional string url = 2;
+    optional string base64 = 3;
+    optional string file_path = 4;
+}
+
+message ProtoMessage {
+    ProtoMessageRole role = 1;
+    string content = 2;
+    ProtoAnnotations annotations = 3;
+    repeated ProtoFileInfo mentioned_files = 4;
+    repeated ProtoFullFileContentStore mentioned_files_stored_contents = 5;
+    repeated ProtoImage images = 6;
+}
+
+message ProtoMessageList {
+    repeated ProtoMessage messages = 1;
+}

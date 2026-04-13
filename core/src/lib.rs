@@ -1,4 +1,5 @@
 pub mod autocomplete;
+pub mod backend;
 pub mod nes;
 pub mod providers;
 pub mod agent;

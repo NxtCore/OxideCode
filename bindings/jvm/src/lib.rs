@@ -5,6 +5,7 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -12,10 +13,15 @@ use tracing_subscriber;
 
 use oxidecode_core::{
     autocomplete::{CompletionContext, CompletionEngine},
+    backend,
     config::{AutocompleteConfig, CompletionEndpoint, NesConfig, NesPromptStyle},
     nes::{EditDelta, NesEngine},
     providers::OmniProvider,
 };
+
+fn jstring_or_empty(env: &mut JNIEnv, value: impl Into<String>) -> jstring {
+    env.new_string(value.into()).unwrap().into_raw()
+}
 
 static ACTIVE_REQUESTS: Lazy<Mutex<HashMap<String, CancellationToken>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -322,4 +328,153 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
 
     let json = serde_json::to_string(&hint).unwrap_or_default();
     env.new_string(json).unwrap().into_raw()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_initLogging(
+    env: JNIEnv,
+    class: JClass,
+) {
+    Java_com_oxidecode_CoreBridge_initLogging(env, class)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_cancelRequest(
+    env: JNIEnv,
+    class: JClass,
+    request_id: JString,
+) {
+    Java_com_oxidecode_CoreBridge_cancelRequest(env, class, request_id)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_getCompletion(
+    env: JNIEnv,
+    class: JClass,
+    base_url: JString,
+    api_key: JString,
+    model: JString,
+    completion_model: JString,
+    prefix: JString,
+    suffix: JString,
+    language: JString,
+    filepath: JString,
+    completion_endpoint: JString,
+    prompt_style: JString,
+    request_id: JString,
+) -> jstring {
+    Java_com_oxidecode_CoreBridge_getCompletion(
+        env,
+        class,
+        base_url,
+        api_key,
+        model,
+        completion_model,
+        prefix,
+        suffix,
+        language,
+        filepath,
+        completion_endpoint,
+        prompt_style,
+        request_id,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_fetchNextEditAutocomplete(
+    mut env: JNIEnv,
+    _class: JClass,
+    base_url: JString,
+    authorization: JString,
+    plugin_version: JString,
+    ide_name: JString,
+    ide_version: JString,
+    debug_info: JString,
+    request_json: JString,
+    content_encoding: JString,
+    request_id: JString,
+) -> jstring {
+    let base_url: String = env.get_string(&base_url).unwrap().into();
+    let authorization: String = env.get_string(&authorization).unwrap().into();
+    let plugin_version: String = env.get_string(&plugin_version).unwrap().into();
+    let ide_name: String = env.get_string(&ide_name).unwrap().into();
+    let ide_version: String = env.get_string(&ide_version).unwrap().into();
+    let debug_info: String = env.get_string(&debug_info).unwrap().into();
+    let request_json: String = env.get_string(&request_json).unwrap().into();
+    let content_encoding: String = env.get_string(&content_encoding).unwrap().into();
+    let request_id: String = env.get_string(&request_id).unwrap().into();
+
+    if base_url.trim().is_empty() {
+        warn!("rust autocomplete backend request skipped because base_url is empty");
+        return jstring_or_empty(&mut env, "");
+    }
+
+    let cancel = CancellationToken::new();
+    let _request_guard = RequestGuard::new(request_id, cancel.clone());
+    let url = format!("{}/backend/next_edit_autocomplete", base_url.trim_end_matches('/'));
+    let url_for_log = url.clone();
+    let request_url = url.clone();
+
+    let result = runtime().block_on(async move {
+        let _ = serde_json::from_str::<serde_json::Value>(&request_json)?;
+        backend::post_backend_bytes(
+            &request_url,
+            request_json.into_bytes(),
+            backend::BackendHeaders {
+                authorization: &authorization,
+                plugin_version: &plugin_version,
+                ide_name: &ide_name,
+                ide_version: &ide_version,
+                debug_info: &debug_info,
+                content_encoding: if content_encoding.trim().is_empty() {
+                    None
+                } else {
+                    Some(content_encoding.as_str())
+                },
+            },
+            Duration::from_secs(10),
+        )
+        .await
+    });
+
+    match result {
+        Ok(response) => jstring_or_empty(&mut env, response),
+        Err(error) => {
+            warn!(url = %url_for_log, error = %error, "rust autocomplete backend request failed");
+            jstring_or_empty(&mut env, "")
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_fetchAutocompleteEntitlement(
+    mut env: JNIEnv,
+    _class: JClass,
+    base_url: JString,
+    authorization: JString,
+) -> jstring {
+    let base_url: String = env.get_string(&base_url).unwrap().into();
+    let authorization: String = env.get_string(&authorization).unwrap().into();
+
+    if base_url.trim().is_empty() {
+        warn!("rust entitlement backend request skipped because base_url is empty");
+        return jstring_or_empty(&mut env, "");
+    }
+
+    let url = format!("{}/backend/is_entitled_to_autocomplete", base_url.trim_end_matches('/'));
+    let url_for_log = url.clone();
+    let request_url = url.clone();
+
+    let result = runtime().block_on(async move {
+        backend::get_backend_text(&request_url, &authorization, Duration::from_secs(5)).await
+    });
+
+    match result {
+        Ok(Some(response)) => jstring_or_empty(&mut env, response),
+        Ok(None) => jstring_or_empty(&mut env, ""),
+        Err(error) => {
+            warn!(url = %url_for_log, error = %error, "rust entitlement backend request failed");
+            jstring_or_empty(&mut env, "")
+        }
+    }
 }

@@ -1,0 +1,10 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- Photo frame -->
+    <rect x="2" y="3" width="12" height="9" rx="1" ry="1" stroke="#D0D0D0" stroke-width="1.5" fill="none"/>
+
+    <!-- Mountains/landscape -->
+    <path d="M2 10L5 7L8 9L11 6L14 8V11.5C14 11.8 13.8 12 13.5 12H2.5C2.2 12 2 11.8 2 11.5V10Z" fill="#D0D0D0"/>
+
+    <!-- Sun/circle -->
+    <circle cx="6" cy="6" r="1.2" fill="#D0D0D0"/>
+</svg>

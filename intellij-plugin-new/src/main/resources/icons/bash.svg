@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+>
+    <path
+            d="M3.36 9.89L4.3 10.83L7.13 8L4.3 5.17L3.36 6.11L5.24 8L3.36 9.89Z"
+            fill="#080808"
+    />
+    <path d="M10 9.33H7.33V10.67H10V9.33Z" fill="#080808" />
+    <path
+            fill-rule="evenodd"
+            clip-rule="evenodd"
+            d="M1.33 1.33C0.6 1.33 0 1.93 0 2.67V13.33C0 14.07 0.6 14.67 1.33 14.67H14.67C15.4 14.67 16 14.07 16 13.33V2.67C16 1.93 15.4 1.33 14.67 1.33H1.33ZM14.67 2.67H1.33V13.33H14.67V2.67Z"
+            fill="#080808"
+    />
+</svg>

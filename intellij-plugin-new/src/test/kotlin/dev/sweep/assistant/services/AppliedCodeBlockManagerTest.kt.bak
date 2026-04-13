@@ -1,0 +1,694 @@
+package dev.sweep.assistant.services
+
+import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.RangeMarker
+import dev.sweep.assistant.views.AppliedCodeBlock
+import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.mockito.Mockito.anyInt
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.`when`
+
+@DisplayName("AppliedCodeBlockManager")
+class AppliedCodeBlockManagerTest {
+    @Nested
+    @DisplayName("shouldRejectConflictingBlocksForFile")
+    inner class ShouldRejectConflictingBlocksForFileTest {
+        /**
+         * Helper to create a mock AppliedCodeBlock with a range marker at the specified line range.
+         * Uses the fileContent to calculate the correct character offsets for the given line numbers.
+         */
+        private fun createMockBlock(
+            startLine: Int,
+            endLine: Int,
+            fileContent: String,
+        ): AppliedCodeBlock {
+            val block = mock(AppliedCodeBlock::class.java)
+            val rangeMarker = mock(RangeMarker::class.java)
+
+            // Calculate character offsets from line numbers
+            val lineStarts = mutableListOf(0)
+            fileContent.forEachIndexed { index, char ->
+                if (char == '\n') {
+                    lineStarts.add(index + 1)
+                }
+            }
+
+            // Get the character offset for the start of the given line
+            val startOffset = if (startLine < lineStarts.size) lineStarts[startLine] else fileContent.length
+            val endOffset = if (endLine < lineStarts.size) lineStarts[endLine] else fileContent.length
+
+            `when`(rangeMarker.startOffset).thenReturn(startOffset)
+            `when`(rangeMarker.endOffset).thenReturn(endOffset)
+            `when`(rangeMarker.isValid).thenReturn(true)
+            `when`(block.rangeMarker).thenReturn(rangeMarker)
+
+            return block
+        }
+
+        /**
+         * Creates a mock document that maps offsets to line numbers based on the actual file content.
+         */
+        private fun createMockDocument(fileContent: String): Document {
+            val document = mock(Document::class.java)
+            // Build a mapping of character offset to line number
+            val lineStarts = mutableListOf(0)
+            fileContent.forEachIndexed { index, char ->
+                if (char == '\n') {
+                    lineStarts.add(index + 1)
+                }
+            }
+
+            `when`(document.getLineNumber(anyInt())).thenAnswer { invocation ->
+                val offset = invocation.getArgument<Int>(0)
+                // Find the line number for this offset
+                val lineIndex = lineStarts.indexOfLast { it <= offset }
+                if (lineIndex >= 0) lineIndex else 0
+            }
+            return document
+        }
+
+        /**
+         * Gets the character offset where a line starts in the file content.
+         */
+        private fun getLineStartOffset(
+            fileContent: String,
+            lineNumber: Int,
+        ): Int {
+            val lineStarts = mutableListOf(0)
+            fileContent.forEachIndexed { index, char ->
+                if (char == '\n') {
+                    lineStarts.add(index + 1)
+                }
+            }
+            return if (lineNumber < lineStarts.size) lineStarts[lineNumber] else fileContent.length
+        }
+
+        /**
+         * Creates file content where the originalCode starts at the specified line.
+         * Each line before originalCode is just "line{n}\n".
+         */
+        private fun createFileContent(
+            originalCode: String,
+            startAtLine: Int,
+        ): String {
+            val prefix = (0 until startAtLine).joinToString("\n") { "line$it" }
+            return if (prefix.isEmpty()) originalCode else "$prefix\n$originalCode"
+        }
+
+        @Test
+        fun `returns false when no applied blocks exist`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = emptyList(),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe false
+        }
+
+        @Test
+        fun `returns true when block overlaps with changed region`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Original starts at line 0, change is on line 1 (middle line differs)
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            // Block spans lines 1-1, which overlaps with the change
+            val block = createMockBlock(startLine = 1, endLine = 1, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `returns false when block is before changed region`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Original starts at line 10, shared prefix is 1 line, shared suffix is 1 line
+            // So change is on line 11 only
+            val fileContent = createFileContent(originalCode, startAtLine = 10)
+            val document = createMockDocument(fileContent)
+
+            // Block is on lines 0-5, which doesn't overlap
+            val block = createMockBlock(startLine = 0, endLine = 5, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 10),
+                )
+            result shouldBe false
+        }
+
+        @Test
+        fun `returns false when block is after changed region`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Original starts at line 0, change is on line 1
+            // Add extra lines after originalCode so block can be on lines 5-10
+            val fileContent = originalCode + "\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11"
+            val document = createMockDocument(fileContent)
+
+            // Block is on lines 5-10, which doesn't overlap with change on line 1
+            val block = createMockBlock(startLine = 5, endLine = 10, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe false
+        }
+
+        @Test
+        fun `returns true when block borders changed region at start`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Change is on line 11 (foundLine=10, prefix=1, so changeStart=11)
+            // Add extra lines after originalCode so the file has enough lines
+            val fileContent = createFileContent(originalCode, startAtLine = 10) + "\nextra"
+            val document = createMockDocument(fileContent)
+
+            // Block ends at line 11, which borders the change
+            val block = createMockBlock(startLine = 8, endLine = 11, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 10),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `returns true when block borders changed region at end`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Change is on line 1 (foundLine=0, prefix=1, changeEnd = 0 + 3 - 1 = 2)
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            // Block starts at line 2, which borders the change
+            val block = createMockBlock(startLine = 2, endLine = 5, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `returns true when any block overlaps among multiple blocks`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Change is on line 1
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            // First block doesn't overlap, second block does
+            val block1 = createMockBlock(startLine = 5, endLine = 6, fileContent = fileContent)
+            val block2 = createMockBlock(startLine = 1, endLine = 1, fileContent = fileContent)
+            val block3 = createMockBlock(startLine = 10, endLine = 15, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block1, block2, block3),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `returns false when no blocks overlap among multiple blocks`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Change is on line 11 (foundLine=10, prefix=1)
+            // Add extra lines to accommodate blocks at lines 20-25
+            val extraLines = (14..30).joinToString("\n") { "extra$it" }
+            val fileContent = createFileContent(originalCode, startAtLine = 10) + "\n" + extraLines
+            val document = createMockDocument(fileContent)
+
+            // All blocks are outside this range
+            val block1 = createMockBlock(startLine = 0, endLine = 5, fileContent = fileContent)
+            val block2 = createMockBlock(startLine = 6, endLine = 8, fileContent = fileContent)
+            val block3 = createMockBlock(startLine = 20, endLine = 25, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block1, block2, block3),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 10),
+                )
+            result shouldBe false
+        }
+
+        @Test
+        fun `handles no shared prefix correctly`() {
+            // No shared prefix - change starts at foundLine
+            val originalCode = "old1\nold2"
+            val modifiedCode = "new1\nnew2"
+            // foundLine=5, changeStart=5, changeEnd=5+2-0=7
+            val fileContent = createFileContent(originalCode, startAtLine = 5)
+            val document = createMockDocument(fileContent)
+
+            val block = createMockBlock(startLine = 6, endLine = 6, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 5),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `handles no shared suffix correctly`() {
+            // Shared prefix is 1 line, no shared suffix
+            val originalCode = "same\nold1\nold2"
+            val modifiedCode = "same\nnew1\nnew2\nnew3"
+            // foundLine=0, changeStart=1, changeEnd=0+3-0=3
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            val block = createMockBlock(startLine = 2, endLine = 2, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `handles completely different code (no shared lines)`() {
+            // No shared prefix or suffix
+            val originalCode = "aaa\nbbb"
+            val modifiedCode = "xxx\nyyy\nzzz"
+            // foundLine=0, changeStart=0, changeEnd=2
+            // Add extra lines so block can be on lines 3-5
+            val fileContent = originalCode + "\nccc\nddd\neee\nfff"
+            val document = createMockDocument(fileContent)
+
+            val block = createMockBlock(startLine = 3, endLine = 5, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe false
+        }
+
+        @Test
+        fun `handles identical code (all lines shared)`() {
+            // All lines are shared prefix, changeStart = changeEnd = foundLine + numLines
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nline2\nline3"
+            // foundLine=0, prefix=3, suffix=0, changeStart=3, changeEnd=3
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            // Block 0-2 doesn't overlap with change at line 3
+            val block = createMockBlock(startLine = 0, endLine = 2, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+
+            result shouldBe false
+        }
+
+        @Test
+        fun `handles single line change in middle of file`() {
+            // 5 lines, only middle line (index 2) changes
+            val originalCode = "a\nb\nOLD\nd\ne"
+            val modifiedCode = "a\nb\nNEW\nd\ne"
+            // foundLine=100, prefix=2, suffix=2, changeStart=102, changeEnd=103
+            val fileContent = createFileContent(originalCode, startAtLine = 100)
+            val document = createMockDocument(fileContent)
+
+            val block = createMockBlock(startLine = 102, endLine = 102, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 100),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `block one line before change region does not overlap or border`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // Change is on line 11 (foundLine=10, prefix=1, changeStart=11, changeEnd=12)
+            val fileContent = createFileContent(originalCode, startAtLine = 10)
+            val document = createMockDocument(fileContent)
+
+            // Block ends at line 9, one line before change starts - no border
+            val block = createMockBlock(startLine = 5, endLine = 9, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 10),
+                )
+            // Block ends at 9, change starts at 11 - they don't border
+            result shouldBe false
+        }
+
+        @Test
+        fun `block exactly one line after change region does not overlap`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            // foundLine=0, prefix=1, suffix=1, changeStart=1, changeEnd=2
+            // Add extra lines so block can be on lines 3-5
+            val fileContent = originalCode + "\nline4\nline5\nline6"
+            val document = createMockDocument(fileContent)
+
+            // Block starts at line 3, one line after change ends
+            val block = createMockBlock(startLine = 3, endLine = 5, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            // Block starts at 3, change ends at 2 - they don't border
+            result shouldBe false
+        }
+
+        @Test
+        fun `handles multiline insertion (more lines in modified)`() {
+            // Original has 3 lines, modified has 5 lines
+            val originalCode = "start\nmiddle\nend"
+            val modifiedCode = "start\nnew1\nnew2\nnew3\nend"
+            // Shared prefix: 1 line, shared suffix: 1 line
+            // foundLine=0, changeStart=1, changeEnd=0+3-1=2
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            val block = createMockBlock(startLine = 1, endLine = 1, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `handles multiline deletion (fewer lines in modified)`() {
+            // Original has 5 lines, modified has 3 lines
+            val originalCode = "start\nold1\nold2\nold3\nend"
+            val modifiedCode = "start\nnew\nend"
+            // Shared prefix: 1 line, shared suffix: 1 line
+            // foundLine=0, changeStart=1, changeEnd=0+5-1=4
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            val block = createMockBlock(startLine = 3, endLine = 3, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe true
+        }
+
+        @Test
+        fun `real world example - function body change`() {
+            val originalCode =
+                """
+                fun calculate(x: Int): Int {
+                    val result = x * 2
+                    return result
+                }
+                """.trimIndent()
+
+            val modifiedCode =
+                """
+                fun calculate(x: Int): Int {
+                    val result = x * 3 + 1
+                    return result
+                }
+                """.trimIndent()
+
+            // Shared prefix: 1 line (function signature)
+            // Shared suffix: 2 lines (return result, closing brace)
+            // foundLine=50, changeStart=51, changeEnd=50+4-2=52
+            val fileContent = createFileContent(originalCode, startAtLine = 50)
+            val document = createMockDocument(fileContent)
+
+            // Block on line 51 (the changed line) - should overlap
+            val blockOverlap = createMockBlock(startLine = 51, endLine = 51, fileContent = fileContent)
+            val resultOverlap =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(blockOverlap),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 50),
+                )
+            resultOverlap shouldBe true
+
+            // Block on line 53 (return statement) - should not overlap
+            val blockNoOverlap = createMockBlock(startLine = 53, endLine = 53, fileContent = fileContent)
+            val resultNoOverlap =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(blockNoOverlap),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 50),
+                )
+            resultNoOverlap shouldBe false
+        }
+
+        @Test
+        fun `real world example - adding import at top of file`() {
+            val originalCode =
+                """
+                import foo.Bar
+                import foo.Baz
+
+                class MyClass {
+                """.trimIndent()
+
+            val modifiedCode =
+                """
+                import foo.Bar
+                import foo.Baz
+                import foo.Qux
+
+                class MyClass {
+                """.trimIndent()
+
+            // Shared prefix: 2 lines
+            // Shared suffix: 2 lines (empty line, class declaration)
+            // foundLine=0, changeStart=2, changeEnd=0+4-2=2
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            // Block on lines 10-15 (somewhere in class body) - should not overlap
+            val block = createMockBlock(startLine = 10, endLine = 15, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+            result shouldBe false
+        }
+
+        @Test
+        fun `returns true when originalCode not found in file content`() {
+            val originalCode = "code that doesn't exist"
+            val modifiedCode = "new code"
+            val fileContent = "completely different content"
+            val document = createMockDocument(fileContent)
+
+            val block = createMockBlock(startLine = 0, endLine = 0, fileContent = fileContent)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+
+            // Should be conservative and return true
+            result shouldBe true
+        }
+
+        @Test
+        fun `returns true when block has invalid range marker`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            // Create a block with an invalid range marker
+            val block = mock(AppliedCodeBlock::class.java)
+            val rangeMarker = mock(RangeMarker::class.java)
+            `when`(rangeMarker.isValid).thenReturn(false)
+            `when`(block.rangeMarker).thenReturn(rangeMarker)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+
+            // Should be conservative and return true
+            result shouldBe true
+        }
+
+        @Test
+        fun `returns true when block has null range marker`() {
+            val originalCode = "line1\nline2\nline3"
+            val modifiedCode = "line1\nmodified\nline3"
+            val fileContent = originalCode
+            val document = createMockDocument(fileContent)
+
+            // Create a block with a null range marker
+            val block = mock(AppliedCodeBlock::class.java)
+            `when`(block.rangeMarker).thenReturn(null)
+
+            val result =
+                shouldRejectConflictingBlocksForFile(
+                    currentAppliedCodeBlocks = listOf(block),
+                    originalCode = originalCode,
+                    modifiedCode = modifiedCode,
+                    currentFileContent = fileContent,
+                    document = document,
+                    project = null,
+                    testFoundOffset = getLineStartOffset(fileContent, 0),
+                )
+
+            // Should be conservative and return true
+            result shouldBe true
+        }
+    }
+}

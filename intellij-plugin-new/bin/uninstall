@@ -1,0 +1,12 @@
+#!/bin/bash
+
+jetbrains_dir="$HOME/Library/Application Support/JetBrains"
+
+for idea_dir in "$jetbrains_dir"/{IntelliJIdea*,PyCharm*}; do
+    if [ -d "$idea_dir" ]; then
+        find "$idea_dir/plugins" -type d -name "sweepai*" -exec rm -rf {} +
+    fi
+done
+
+
+echo -e "\033[31mUninstalled plugin successfully. Restart your IDE to see changes\033[0m"

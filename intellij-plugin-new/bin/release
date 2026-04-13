@@ -1,0 +1,115 @@
+#!/bin/bash
+
+set -e
+
+# Configure logging
+log_info() {
+    echo "[INFO] $1"
+}
+
+log_error() {
+    echo "[ERROR] $1" >&2
+}
+
+log_warning() {
+    echo "[WARNING] $1" >&2
+}
+
+# Check if command exists and is executable
+check_command() {
+    if ! command -v "$1" &> /dev/null; then
+        log_error "$1 is not installed. Please install it first."
+        exit 1
+    fi
+}
+
+# Check GitHub CLI and authentication
+check_gh_cli() {
+    check_command "gh"
+    if ! gh auth status &> /dev/null; then
+        log_error "You are not authenticated with GitHub. Please run 'gh auth login' first."
+        exit 1
+    fi
+}
+
+# Approve PR using GitHub API
+approve_pr() {
+    local pr_url=$1
+    if [ -z "$GITHUB_REVIEW_PAT" ]; then
+        log_error "GITHUB_REVIEW_PAT environment variable not set. Cannot approve PR."
+        return
+    fi
+
+    IFS='/' read -r _ _ _ repo_owner repo_name _ pull_request_number <<< "$pr_url"
+
+    local review_url="https://api.github.com/repos/${repo_owner}/${repo_name}/pulls/${pull_request_number}/reviews"
+    local response=$(curl -s -X POST \
+        -H "Authorization: token ${GITHUB_REVIEW_PAT}" \
+        -H "Content-Type: application/json" \
+        -d '{"event":"APPROVE","body":"Automatically approved"}' \
+        "$review_url")
+
+    if echo "$response" | grep -q '"state": "APPROVED"'; then
+        log_info "PR approved successfully!"
+    else
+        log_error "Error approving PR: $response"
+    fi
+}
+
+# Main function
+main() {
+    check_gh_cli
+
+    # Step 1: Check if on dev branch
+    log_info "Step 1: Checking current branch"
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$current_branch" != "dev" ]; then
+        log_error "Not on 'dev' branch. Current branch: $current_branch"
+        exit 1
+    fi
+    log_info "Current branch: $current_branch"
+
+    # Step 2: Git fetch
+    log_info "Step 2: Fetching latest changes"
+    git fetch --all
+    log_info "Fetch completed"
+
+    # Step 3: Create PR
+    log_info "Step 3: Creating Pull Request"
+    pr_url=$(gh pr create \
+        --base release \
+        --head dev \
+        --title "Merge dev into release" \
+        --body "Automated PR to merge dev branch into main")
+
+    if [ -n "$pr_url" ]; then
+        log_info "Pull request created successfully! URL: $pr_url"
+
+        # Step 4: Approve PR
+        log_info "Step 4: Approving Pull Request"
+        approve_pr "$pr_url"
+
+        # Open PR in browser
+        if command -v xdg-open &> /dev/null; then
+            xdg-open "$pr_url"
+        elif command -v open &> /dev/null; then
+            open "$pr_url"
+        fi
+
+        # Wait for user input
+        read -p "Press Enter to merge PR"
+
+        # Step 5: Merge PR
+        log_info "Step 5: Merging Pull Request"
+        pr_number=$(echo "$pr_url" | awk -F'/' '{print $NF}')
+        merge_result=$(gh pr merge "$pr_number" --merge)
+        log_info "Merge result: $merge_result"
+    else
+        log_warning "Failed to create Pull Request"
+    fi
+
+    log_info "Process completed!"
+}
+
+# Execute main function
+main

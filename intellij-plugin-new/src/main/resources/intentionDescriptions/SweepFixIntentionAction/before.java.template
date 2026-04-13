@@ -1,0 +1,5 @@
+public class Example {
+    public void method() {
+        <spot>String badName = "example";</spot> // Error: variable name convention violation
+    }
+}

@@ -1,0 +1,6 @@
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <!-- Light mode error/warning icon - subtle gray triangle with exclamation -->
+  <path d="M8 1.5L14.5 13H1.5L8 1.5Z" fill="none" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/>
+  <circle cx="8" cy="10.5" r="0.6" fill="#000"/>
+  <line x1="8" y1="6" x2="8" y2="8.5" stroke="#000" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+./gradlew runIdeForUiTests & IDE_PID=$!
+trap "kill $IDE_PID 2>/dev/null" EXIT
+./gradlew test --tests "dev.sweep.assistant.e2e.*"
+
+TEST_EXIT=$?
+kill $IDE_PID 2>/dev/null
+exit $TEST_EXIT

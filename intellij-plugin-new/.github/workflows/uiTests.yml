@@ -1,0 +1,74 @@
+name: Run E2E UI Tests
+on:
+   pull_request:
+     branches: [main, dev]
+
+jobs:
+  run-ui-test:
+    name: run tests for ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+#          - os: linux-larger
+#            runIde: |
+#              export DISPLAY=:99.0
+#              Xvfb -ac :99 -screen 0 1920x1080x24 &
+#              sleep 10
+#              mkdir -p jetbrains/build/reports
+#              ./gradlew runIdeForUiTests > jetbrains/build/reports/idea.log &
+#            runTests: |
+#              export DISPLAY=:99.0
+#              ./gradlew test --tests "dev.sweep.assistant.e2e.*"
+#            url: http://127.0.0.1:8082
+#            reportName: ui-test-fails-report-linux
+#          - os: macOS-latest-xlarge
+#            runIde: ./gradlew runIdeForUiTests &
+#            runTests: ./gradlew test --tests "dev.sweep.assistant.e2e.*"
+#            url: http://127.0.0.1:8082
+#            reportName: ui-test-fails-report-mac
+          - os: windows-larger
+            runIde: start gradlew.bat runIdeForUiTests
+            runTests: ./gradlew test --tests "dev.sweep.assistant.e2e.*"
+            url: http://localhost:8082
+            reportName: ui-test-fails-report-windows
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4.1.5
+
+      - name: Setup Java
+        uses: actions/setup-java@v4.5.0
+        with:
+          distribution: zulu
+          java-version: 17
+
+      - name: Clean
+        run: ./gradlew clean
+
+      - name: Run Idea
+        run: ${{ matrix.runIde }}
+
+      - name: Wait for Idea started
+        uses: jtalk/url-health-check-action@v3
+        with:
+          url: ${{ matrix.url }}
+          max-attempts: 15
+          retry-delay: 30s
+
+      - name: Run tests
+        env:
+          GITHUB_PAT: ${{ secrets.GH_PAT }}
+        run: ${{ matrix.runTests }}
+
+      - name: Move video
+        if: always()
+        run: mv video build/reports
+
+      - name: Show report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.reportName }}
+          path: |
+            build/reports

@@ -1,0 +1,9 @@
+<idea-plugin>
+    <!-- Config file for optional JavaScript/TypeScript dependency -->
+    <actions>
+        <!-- Add existing Sweep actions group to WebStorm's JS-specific floating code toolbar -->
+        <reference ref="dev.sweep.assistant.controllers.RightClickAction">
+            <add-to-group group-id="Floating.CodeToolbar.JS" anchor="first"/>
+        </reference>
+    </actions>
+</idea-plugin>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+    <!-- Circle background -->
+    <circle cx="12" cy="12" r="12" fill="#414244" />
+
+    <!-- Centered arrow -->
+    <line x1="12" y1="8" x2="12" y2="16" stroke="white" stroke-width="1.3" stroke-linecap="round"/>
+    <polyline points="8,12 12,8 16,12" fill="none" stroke="white" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

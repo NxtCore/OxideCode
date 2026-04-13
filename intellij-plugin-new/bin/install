@@ -1,0 +1,47 @@
+#!/bin/bash
+
+project_dir=$(dirname $(dirname $0))
+cd "$project_dir"
+
+# Create SWEEP_PUBLIC_ENV file for cloud environment if --cloud flag is provided
+if [ "$1" == "--cloud" ]; then
+    mkdir -p "src/main/resources"
+    echo "ENVIRONMENT=cloud" > "src/main/resources/SWEEP_PUBLIC_ENV"
+fi
+
+# Check if --cloud flag is provided
+if [ "$1" == "--cloud" ]; then
+    mkdir -p "src/main/resources"
+    echo "ENVIRONMENT=cloud" > "src/main/resources/SWEEP_PUBLIC_ENV"
+    ./gradlew buildPlugin -Pcloud=true
+else
+    ./gradlew buildPlugin
+fi
+
+jetbrains_dir="$HOME/Library/Application Support/JetBrains"
+plugin_file=$(ls -t "build/distributions"/*.zip | head -1)
+
+# If in cloud mode, rename the zip file to prepend "cloud" only if not already prefixed
+if [ "$1" == "--cloud" ]; then
+    if [[ ! $(basename "$plugin_file") =~ ^cloud- ]]; then
+        cloud_plugin_file="build/distributions/cloud-$(basename $plugin_file)"
+        mv "$plugin_file" "$cloud_plugin_file"
+        plugin_file="$cloud_plugin_file"
+    fi
+fi
+
+for idea_dir in "$jetbrains_dir"/{IntelliJIdea*,PyCharm*,WebStorm*,CLion*,RubyMine*,Rider*}; do
+    if [ -d "$idea_dir" ]; then
+        plugins_dir="$idea_dir/plugins"
+        find "$idea_dir/plugins" -type d -name "sweepai*" -exec rm -rf {} +
+        mkdir -p "$plugins_dir"
+        unzip -q "$plugin_file" -d "$plugins_dir"
+    fi
+done
+
+# Clean up SWEEP_PUBLIC_ENV file if --cloud flag was used
+if [ "$1" == "--cloud" ]; then
+    git restore "src/main/resources/SWEEP_PUBLIC_ENV" 2>/dev/null || rm -f "src/main/resources/SWEEP_PUBLIC_ENV"
+fi
+
+echo -e "\033[31mInstalled plugin successfully. Restart your IDE to see changes\033[0m"

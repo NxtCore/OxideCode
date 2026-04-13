@@ -1,0 +1,205 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
+    <id>dev.sweep.assistant</id>
+
+    <!-- Public plugin name should be written in Title Case.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-name -->
+    <name>Sweep</name>
+
+    <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
+    <vendor email="support@sweep.dev" url="https://sweep.dev">Sweep AI</vendor>
+
+    <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
+         Simple HTML elements (text formatting, paragraphs, and lists) can be added inside of <![CDATA[ ]]> tag.
+         Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
+    <description><![CDATA[
+    <strong>This plugin is only for Enterprise customers</strong> with private installations (i.e. you've been linked to this). Other users should use the standard extension in the <a href="https://plugins.jetbrains.com/plugin/26860-sweep-ai">JetBrains Marketplace</a>.
+    ]]></description>
+    <change-notes><![CDATA[
+<ul>
+  <li><b>Bug Fixes and Improvements</b>
+    <ul>
+        <li>Streamed file modifications now show additions and removals as they happen.</li>
+    </ul>
+  </li>
+</ul>
+<p>Check out our <a href="https://docs.sweep.dev">documentation</a> or <a href="https://discord.com/invite/sweep">Discord</a>!</p>
+    ]]></change-notes>
+
+    <!-- Product and plugin compatibility requirements.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+    <depends optional="true" config-file="java.xml">com.intellij.modules.java</depends>
+    <depends optional="true" config-file="kotlin.xml">org.jetbrains.kotlin</depends>
+    <depends optional="true" config-file="python.xml">com.intellij.modules.python</depends>
+    <depends optional="true" config-file="typescript.xml">JavaScript</depends>
+    <depends optional="true" config-file="cpp.xml">com.intellij.modules.cidr.lang</depends>
+    <depends optional="true" config-file="ruby.xml">org.jetbrains.plugins.ruby</depends>
+
+    <!-- Extension points defined by the plugin.
+         Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+                id="Sweep AI"
+                anchor="right"
+                icon="/icons/sweep13x13.svg"
+                factoryClass="dev.sweep.assistant.Sweep"
+                canCloseContents="true"/>
+        <postStartupActivity implementation="dev.sweep.assistant.startup.SweepStartupActivity"/>
+        <postStartupActivity implementation="dev.sweep.assistant.startup.FirstRunSettingsActivity"/>
+        <postStartupActivity implementation="dev.sweep.assistant.startup.FindActionInitializer"/>
+        <notificationGroup id="Error Notifications" displayType="BALLOON"/>
+        <notificationGroup id="Sweep AI Notifications" displayType="BALLOON"/>
+        <notificationGroup id="Sweep Autocomplete" displayType="BALLOON"/>
+        <notificationGroup id="Sweep Version Update" displayType="BALLOON"/>
+        <notificationGroup id="Sweep Plugin Conflicts" displayType="BALLOON"/>
+        <applicationService serviceImplementation="dev.sweep.assistant.settings.SweepSettings"/>
+        <applicationService serviceImplementation="dev.sweep.assistant.settings.SweepMetaData"/>
+        <projectConfigurable
+                groupId="tools"
+                displayName="Sweep"
+                id="dev.sweep.assistant.settings.SweepSettingsConfigurable"
+                instance="dev.sweep.assistant.settings.SweepSettingsConfigurable"/>
+        <!--        <postStartupActivity implementation="dev.sweep.assistant.startup.SelectionPopupStartupActivity"/>-->
+        <postStartupActivity implementation="dev.sweep.assistant.version.VersionChecker"/>
+        <errorHandler implementation="dev.sweep.assistant.services.SweepErrorReporter"/>
+        <editorNotificationProvider implementation="dev.sweep.assistant.notifications.McpServerNotificationProvider"/>
+        <editorNotificationProvider implementation="dev.sweep.assistant.notifications.AutocompleteExclusionNotificationProvider"/>
+        <actionPromoter implementation="dev.sweep.assistant.actions.SweepActionPromoter"/>
+        <!-- Intention: show in Alt+Enter More actions when caret is on a problem -->
+        <intentionAction>
+            <language>any</language>
+            <className>dev.sweep.assistant.actions.SweepFixIntentionAction</className>
+            <category>Sweep</category>
+        </intentionAction>
+        <statusBarWidgetFactory id="SweepAutocompleteStatus"
+                                implementation="dev.sweep.assistant.statusbar.AutocompleteStatusBarWidgetFactory"/>
+    </extensions>
+
+    <applicationListeners>
+        <listener class="dev.sweep.assistant.listener.PluginUnloadListener"
+                  topic="com.intellij.ide.plugins.DynamicPluginListener"/>
+    </applicationListeners>
+
+    <actions>
+        <action id="dev.sweep.assistant.components.ShowPromptBarAction"
+                class="dev.sweep.assistant.components.ShowPromptBarAction"
+                text="New Inline Edit"
+                description="Show Prompt Bar after highlighting a block of code and execute instructions">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl i"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta i"/>
+        </action>
+        <action id="dev.sweep.assistant.apply.RejectFileAction"
+                class="dev.sweep.assistant.components.RejectFileAction"
+                text="Reject All Agent Changes in File"
+                description="Reject all changes in the current file">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift BACK_SPACE"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift BACK_SPACE"/>
+        </action>
+        <action id="dev.sweep.assistant.apply.AcceptFileAction"
+                class="dev.sweep.assistant.components.AcceptFileAction"
+                text="Accept All Agent Changes in File"
+                description="Accept all changes in the current file">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl ENTER"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta ENTER"/>
+        </action>
+        <action id="dev.sweep.assistant.apply.RejectCodeBlockAction"
+                class="dev.sweep.assistant.actions.RejectCodeBlockAction"
+                text="Reject Agent Change"
+                description="Reject a single agent change">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl n"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta n"/>
+        </action>
+        <action id="dev.sweep.assistant.actions.SweepNewChatAction"
+                class="dev.sweep.assistant.actions.SweepNewChatAction"
+                text="New Sweep Chat"
+                description="Start a new Sweep AI chat">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl n"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta n"/>
+        </action>
+        <action id="dev.sweep.assistant.apply.AcceptCodeBlockAction"
+                class="dev.sweep.assistant.actions.AcceptCodeBlockAction"
+                text="Accept Agent Change"
+                description="Accept a single agent change">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl y"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta y"/>
+        </action>
+        <action id="dev.sweep.assistant.autocomplete.edit.AcceptEditCompletionAction"
+                class="dev.sweep.assistant.autocomplete.edit.AcceptEditCompletionAction"
+                text="Accept Autocomplete Suggestion"
+                description="Accept Autocomplete Suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="TAB"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="TAB"/>
+        </action>
+        <action id="dev.sweep.assistant.autocomplete.edit.RejectEditCompletionAction"
+                class="dev.sweep.assistant.autocomplete.edit.RejectEditCompletionAction"
+                text="Reject Autocomplete Suggestion"
+                description="Reject Autocomplete Suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="ESCAPE"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="ESCAPE"/>
+        </action>
+        <action id="dev.sweep.assistant.autocomplete.edit.ClearAutocompleteRejectionCacheAction"
+                class="dev.sweep.assistant.autocomplete.edit.ClearAutocompleteRejectionCacheAction"
+                text="Show Last Rejected Suggestion"
+                description="Undo cancellation and force a new autocomplete suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt shift BACK_SPACE"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt shift BACK_SPACE"/>
+        </action>
+        <action id="dev.sweep.assistant.actions.FocusChatAction"
+                class="dev.sweep.assistant.actions.FocusChatAction"
+                text="Add Selection to Sweep Agent">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift J"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift J"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta shift J"/>
+        </action>
+        <group id="dev.sweep.assistant.controllers.RightClickAction"
+                class="dev.sweep.assistant.actions.SweepActionsGroup"
+                text="Sweep Agent Right Click Actions"
+                popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+            <add-to-group group-id="Floating.CodeToolbar" anchor="first"/>
+        </group>
+        <action id="dev.sweep.assistant.actions.NewChatAction"
+                class="dev.sweep.assistant.actions.NewChatAction"
+                text="Open New Sweep Agent Chat"
+                description="Open a new Sweep AI chat input field">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl J"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta J"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta J"/>
+        </action>
+        <action id="dev.sweep.assistant.actions.GoToFileWithChangesAction"
+                class="dev.sweep.assistant.actions.GoToFileWithChangesAction"
+                text="Go to File with Changes"
+                description="Navigate to the first file with changes and scroll to the first change">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt L"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt L"/>
+        </action>
+        <action id="dev.sweep.assistant.actions.ScrollToNextCodeBlockAction"
+                class="dev.sweep.assistant.actions.ScrollToNextCodeBlockAction"
+                text="Scroll to Next Agent Change"
+                description="Scroll to the next applied agent change">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt J"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt J"/>
+        </action>
+        <action id="dev.sweep.assistant.actions.ScrollToPreviousCodeBlockAction"
+                class="dev.sweep.assistant.actions.ScrollToPreviousCodeBlockAction"
+                text="Scroll to Previous Agent Change"
+                description="Scroll to the previous applied agent change">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt K"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt K"/>
+        </action>
+        <action id="dev.sweep.assistant.actions.CopyBackgroundBashTranscriptAction"
+                class="dev.sweep.assistant.actions.CopyBackgroundBashTranscriptAction"
+                text="Copy Background Bash Transcript"
+                description="Copy the background bash executor transcript to clipboard (Developer Mode only)">
+        </action>
+        <action id="dev.sweep.assistant.actions.EstimateTabMemoryAction"
+                class="dev.sweep.assistant.actions.EstimateTabMemoryAction"
+                text="Estimate Tab Memory Usage"
+                description="Estimate memory usage of all tabs/sessions and copy report to clipboard (Developer Mode only)">
+        </action>
+    </actions>
+    <resource-bundle>messages.sweep</resource-bundle>
+</idea-plugin>

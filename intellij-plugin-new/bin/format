@@ -1,0 +1,10 @@
+#!/bin/bash
+
+if ! command -v ktlint &> /dev/null; then
+    echo "ktlint not found, downloading..."
+    curl -sSLO https://github.com/pinterest/ktlint/releases/download/1.5.0/ktlint
+    chmod a+x ktlint
+    sudo mv ktlint /usr/local/bin/
+fi
+
+ktlint "src/*/kotlin/**/*.kt" -F

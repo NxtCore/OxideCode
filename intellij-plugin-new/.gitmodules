@@ -1,0 +1,3 @@
+[submodule "vendor/intellij-community"]
+	path = vendor/intellij-community
+	url = https://github.com/JetBrains/intellij-community

@@ -1,0 +1,10 @@
+// Opens Sweep assistant with pre-filled prompt:
+//
+// For the following code:
+// ```
+// public void method() {
+//     String badName = "example";
+// }
+// ```
+// We have the error: variable name convention violation
+// Please fix this. If needed, you can use the get_errors tool on this file.
