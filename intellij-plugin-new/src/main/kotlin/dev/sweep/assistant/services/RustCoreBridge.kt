@@ -22,20 +22,6 @@ class RustCoreBridge {
 
     external fun cancelRequest(requestId: String)
 
-    external fun getCompletion(
-        baseUrl: String,
-        apiKey: String,
-        model: String,
-        completionModel: String,
-        prefix: String,
-        suffix: String,
-        language: String,
-        filepath: String,
-        completionEndpoint: String,
-        promptStyle: String,
-        requestId: String,
-    ): String
-
     external fun predictNextEdit(
         baseUrl: String,
         apiKey: String,

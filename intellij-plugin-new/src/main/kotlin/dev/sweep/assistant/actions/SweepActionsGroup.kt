@@ -10,7 +10,7 @@ import dev.sweep.assistant.utils.SweepConstants
  * Includes built-in actions and dynamically loaded custom prompts.
  */
 class SweepActionsGroup : ActionGroup() {
-    private val icon = IconLoader.getIcon("/icons/sweep16x16.svg", SweepActionsGroup::class.java)
+    private val icon = IconLoader.getIcon("/icons/oxidecode16x16.svg", SweepActionsGroup::class.java)
 
     override fun getChildren(e: AnActionEvent?): Array<AnAction> {
         // In CLIENT mode, don't show any actions

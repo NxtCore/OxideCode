@@ -22,7 +22,6 @@ import dev.sweep.assistant.services.AutocompleteSnoozeService
 import dev.sweep.assistant.services.FeatureFlagService
 import dev.sweep.assistant.services.RustCoreBridge
 import dev.sweep.assistant.services.SweepProjectService
-import dev.sweep.assistant.settings.SweepEnvironmentConstants.Defaults.BILLING_URL
 import dev.sweep.assistant.settings.SweepSettings
 import dev.sweep.assistant.tracking.EventType
 import dev.sweep.assistant.tracking.TelemetryService
@@ -106,45 +105,16 @@ class AutocompleteStatusBarWidget(
         when {
             snoozeService.isAutocompleteSnooze() -> {
                 val remaining = snoozeService.formatRemainingTime()
-                "Sweep Autocomplete: Snoozed ($remaining remaining) - Click for options"
+                "OxideCode Autocomplete: Snoozed ($remaining remaining) - Click for options"
             }
-            isAlive -> "Sweep Autocomplete: Online - Click for options"
-            else -> "Sweep Autocomplete: Offline - Click for options"
+            isAlive -> "OxideCode Autocomplete: Online - Click for options"
+            else -> "OxideCode Autocomplete: Offline - Click for options"
         }
 
     private fun getSweepIcon(state: IconState): Icon {
-        val baseIcon = IconLoader.getIcon("/icons/sweep16x16.svg", javaClass)
+        val baseIcon = IconLoader.getIcon("/icons/oxidecode16x16.svg", javaClass)
 
-        return when (state) {
-            IconState.NORMAL -> baseIcon
-            IconState.DARKER -> {
-                object : Icon {
-                    override fun paintIcon(
-                        c: java.awt.Component?,
-                        g: java.awt.Graphics?,
-                        x: Int,
-                        y: Int,
-                    ) {
-                        // Paint the base Sweep icon with darker appearance
-                        g?.let { graphics ->
-                            if (graphics is java.awt.Graphics2D) {
-                                val originalComposite = graphics.composite
-                                // Make the icon appear darker by reducing opacity
-                                graphics.composite = java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.5f)
-                                baseIcon.paintIcon(c, graphics, x, y)
-                                graphics.composite = originalComposite
-                            } else {
-                                baseIcon.paintIcon(c, graphics, x, y)
-                            }
-                        } ?: baseIcon.paintIcon(c, g, x, y)
-                    }
-
-                    override fun getIconWidth(): Int = baseIcon.iconWidth
-
-                    override fun getIconHeight(): Int = baseIcon.iconHeight
-                }
-            }
-        }
+        return baseIcon
     }
 
     private fun startHealthCheck() {
@@ -194,19 +164,6 @@ class AutocompleteStatusBarWidget(
                 else -> "Unlimited access"
             }
 
-        if (!snoozeService.isAutocompleteSnooze() && isAlive) {
-            currentEntitlementInfo?.let { info ->
-                // Only show upgrade option for limited plans (not unlimited) or when out of suggestions
-                if (info.autocomplete_suggestions_remaining <= info.autocomplete_budget || info.autocomplete_suggestions_remaining == 0) {
-                    // Add upgrade button if user is not entitled or has low balance
-                    menuItems.add("Upgrade to Pro")
-                    actions.add {
-                        BrowserUtil.browse("https://app.sweep.dev")
-                    }
-                }
-            }
-        }
-
         if (snoozeService.isAutocompleteSnooze()) {
             // Show unsnooze option
             val remaining = snoozeService.formatRemainingTime()
@@ -241,7 +198,7 @@ class AutocompleteStatusBarWidget(
         }
 
         val popupStep =
-            object : BaseListPopupStep<String>("Sweep Autocomplete\n($accessStatus)", menuItems) {
+            object : BaseListPopupStep<String>("OxideCode Autocomplete\n($accessStatus)", menuItems) {
                 override fun onChosen(
                     selectedValue: String?,
                     finalChoice: Boolean,
@@ -280,16 +237,16 @@ class AutocompleteStatusBarWidget(
                 val notificationGroup =
                     NotificationGroupManager
                         .getInstance()
-                        .getNotificationGroup("Sweep Autocomplete")
+                        .getNotificationGroup("OxideCode Autocomplete")
 
                 if (notificationGroup == null) {
-                    println("Sweep Autocomplete: Notification group not found!")
+                    println("OxideCode Autocomplete: Notification group not found!")
                     return@invokeLater
                 }
 
                 val notification =
                     notificationGroup.createNotification(
-                        "Sweep Autocomplete",
+                        "OxideCode Autocomplete",
                         "You're running low on autocomplete suggestions ($remaining/$budget remaining). Upgrade to Pro for unlimited completions.",
                         NotificationType.WARNING,
                     )
@@ -305,7 +262,7 @@ class AutocompleteStatusBarWidget(
 
                 notification.notify(project)
             } catch (e: Exception) {
-                println("Sweep Autocomplete: Error showing low completions warning: ${e.message}")
+                println("OxideCode Autocomplete: Error showing low completions warning: ${e.message}")
                 e.printStackTrace()
             }
         }
@@ -317,16 +274,16 @@ class AutocompleteStatusBarWidget(
                 val notificationGroup =
                     NotificationGroupManager
                         .getInstance()
-                        .getNotificationGroup("Sweep Autocomplete")
+                        .getNotificationGroup("OxideCode Autocomplete")
 
                 if (notificationGroup == null) {
-                    println("Sweep Autocomplete: Notification group not found!")
+                    println("OxideCode Autocomplete: Notification group not found!")
                     return@invokeLater
                 }
 
                 val notification =
                     notificationGroup.createNotification(
-                        "Sweep Autocomplete",
+                        "OxideCode Autocomplete",
                         "You've run out of autocomplete suggestions. Upgrade to Pro for unlimited completions.",
                         NotificationType.ERROR,
                     )
@@ -342,7 +299,7 @@ class AutocompleteStatusBarWidget(
 
                 notification.notify(project)
             } catch (e: Exception) {
-                println("Sweep Autocomplete: Error showing out of completions notification: ${e.message}")
+                println("OxideCode Autocomplete: Error showing out of completions notification: ${e.message}")
                 e.printStackTrace()
             }
         }
@@ -352,30 +309,6 @@ class AutocompleteStatusBarWidget(
         scope.launch {
             try {
                 isAlive = performHealthCheck()
-
-                // Check completion status and show notifications
-                entitlementInfo?.let { currentInfo ->
-                    val currentRemaining = currentInfo.autocomplete_suggestions_remaining
-                    val budget = currentInfo.autocomplete_budget
-
-                    // Only show notifications for limited plans (not unlimited)
-                    if (currentRemaining <= budget) {
-                        // Show notification if user is out of completions
-                        if (currentRemaining == 0 && !hasShownOutOfCompletionsNotification) {
-                            showOutOfCompletionsNotification()
-                            if (FeatureFlagService.getInstance(project).isFeatureEnabled("open-billing-url-when-out-of-completions")) {
-                                BrowserUtil.browse(BILLING_URL)
-                            }
-                            hasShownOutOfCompletionsNotification = true
-                        } else if (currentRemaining in 1..<10 &&
-                            // check zero so we don't double show notifs
-                            !hasShownLowCompletionsWarning
-                        ) { // Show warning when getting less than 10 completions remaining
-                            showLowCompletionsWarning(currentRemaining, budget)
-                            hasShownLowCompletionsWarning = true
-                        }
-                    }
-                }
             } catch (e: Exception) {
                 isAlive = false
                 entitlementInfo = null
@@ -386,30 +319,9 @@ class AutocompleteStatusBarWidget(
     private suspend fun performHealthCheck(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                val authorization =
-                    if (SweepSettings.getInstance().githubToken.isBlank()) {
-                        "Bearer device_id_${PermanentInstallationID.get()}"
-                    } else {
-                        "Bearer ${SweepSettings.getInstance().githubToken}"
-                    }
+                return@withContext SweepSettings.getInstance().directAutocompleteProvider.baseUrl.trim().isNotBlank() &&
+                    SweepSettings.getInstance().directAutocompleteProvider.model.trim().isNotBlank()
 
-                val responseText = rustCoreBridge.fetchAutocompleteEntitlement(
-                    baseUrl = dev.sweep.assistant.services.AutocompleteIpResolverService.getInstance(project).getBaseUrl(),
-                    authorization = authorization,
-                )
-
-                if (responseText.isBlank()) {
-                    entitlementInfo = null
-                    return@withContext false
-                }
-
-                try {
-                    entitlementInfo = Json.decodeFromString<AutocompleteEntitlementResponse>(responseText)
-                } catch (e: Exception) {
-                    entitlementInfo = null
-                }
-
-                return@withContext true
             } catch (e: Exception) {
                 entitlementInfo = null
                 false

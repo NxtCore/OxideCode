@@ -333,6 +333,7 @@ class RecentEditsTracker(
 
     private data class AutocompleteRequestEntry(
         val id: String = UUID.randomUUID().toString(),
+        val rustRequestId: String = "ij-next-edit-${UUID.randomUUID()}",
         var editorState: EditorState,
         val requestTime: Long = System.currentTimeMillis(),
     )
@@ -341,6 +342,7 @@ class RecentEditsTracker(
     private var consumerJob: Job? = null
     private val fetchJobs =
         ConcurrentHashMap<Long, CompletableDeferred<Pair<AutocompleteRequestEntry, NextEditAutocompleteResponse?>>>()
+    private val fetchRequestIds = ConcurrentHashMap<Long, String>()
     private val mutex = Mutex()
     private val completionChannel =
         Channel<Pair<AutocompleteRequestEntry, NextEditAutocompleteResponse?>>(Channel.BUFFERED)
@@ -1933,11 +1935,16 @@ class RecentEditsTracker(
         try {
             mutex.withLock {
                 // Cancel all previous requests
+                fetchRequestIds.values.forEach { requestId ->
+                    AutocompleteIpResolverService.getInstance(project).cancelRequest(requestId)
+                }
+                fetchRequestIds.clear()
                 fetchJobs.values.forEach { it.cancel() }
                 fetchJobs.clear()
 
                 // Add the new request
                 fetchJobs[requestEntry.requestTime] = deferred
+                fetchRequestIds[requestEntry.requestTime] = requestEntry.rustRequestId
             }
 //            println("Sending request: ${requestEntry.id} at time ${requestEntry.requestTime}")
             val response =
@@ -1945,6 +1952,7 @@ class RecentEditsTracker(
                     filePath = requestEntry.editorState.filePath,
                     fileContents = requestEntry.editorState.documentText,
                     caretPosition = requestEntry.editorState.cursorOffset,
+                    requestId = requestEntry.rustRequestId,
                 )?.apply { adjustIndices(requestEntry.editorState.documentText) }
             // println("Received response: ${response?.autocomplete_id} in ${System.currentTimeMillis() - requestEntry.requestTime}")
             deferred.complete(requestEntry to response)
@@ -1956,6 +1964,7 @@ class RecentEditsTracker(
         } finally {
             mutex.withLock {
                 fetchJobs.remove(requestEntry.requestTime)
+                fetchRequestIds.remove(requestEntry.requestTime)
             }
         }
     }
@@ -2008,6 +2017,10 @@ class RecentEditsTracker(
 
                         // If so, cancel all fetch requests
                         mutex.withLock {
+                            fetchRequestIds.values.forEach { requestId ->
+                                AutocompleteIpResolverService.getInstance(project).cancelRequest(requestId)
+                            }
+                            fetchRequestIds.clear()
                             fetchJobs.values.forEach { it.cancel() }
                             fetchJobs.clear()
                         }
@@ -2224,6 +2237,7 @@ class RecentEditsTracker(
         filePath: String,
         fileContents: String,
         caretPosition: Int,
+        requestId: String,
     ): NextEditAutocompleteResponse? {
         try {
             val repoName = userSpecificRepoName(project)
@@ -2352,7 +2366,7 @@ class RecentEditsTracker(
 
             val startTime = System.currentTimeMillis()
 
-            val result = AutocompleteIpResolverService.getInstance(project).fetchNextEditAutocomplete(request)
+            val result = AutocompleteIpResolverService.getInstance(project).fetchNextEditAutocomplete(request, requestId)
 
             val wallTime = System.currentTimeMillis() - startTime
             val serverTime = result?.elapsed_time_ms ?: Long.MAX_VALUE
@@ -2595,6 +2609,10 @@ class RecentEditsTracker(
         consumerJob = null
 
         // Clear fetch jobs synchronously
+        fetchRequestIds.values.forEach { requestId ->
+            AutocompleteIpResolverService.getInstance(project).cancelRequest(requestId)
+        }
+        fetchRequestIds.clear()
         fetchJobs.forEach { (_, deferred) ->
             if (!deferred.isCompleted) {
                 deferred.cancel()

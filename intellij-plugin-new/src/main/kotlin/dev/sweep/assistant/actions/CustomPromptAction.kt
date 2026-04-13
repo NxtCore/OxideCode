@@ -19,7 +19,7 @@ class CustomPromptAction(
     private val promptText: String,
     private val includeSelectedCode: Boolean = true,
 ) : AnAction() {
-    private val icon = IconLoader.getIcon("/icons/sweep16x16.svg", CustomPromptAction::class.java)
+        private val icon = IconLoader.getIcon("/icons/oxidecode16x16.svg", CustomPromptAction::class.java)
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return

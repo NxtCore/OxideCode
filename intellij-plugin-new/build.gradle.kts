@@ -18,7 +18,7 @@ val pluginId = "dev.sweep.assistant"
 val pluginName = "Self-Hosted Enterprise Updater"
 println("Building plugin: $pluginName with ID: $pluginId")
 group = "dev.sweep"
-version = "1.29.3"
+version = "0.3.0"
 
 repositories {
     mavenCentral()
@@ -40,15 +40,9 @@ intellijPlatform {
             select {
                 types.set(listOf(IntelliJPlatformType.WebStorm))
                 channels.set(listOf(ProductRelease.Channel.RELEASE))
-                sinceBuild.set("242")
-                untilBuild.set("243.*")
+                sinceBuild.set("241")
+                untilBuild.set("261.*")
             }
-//            select {
-//                types.set(listOf(IntelliJPlatformType.DataGrip))
-//                channels.set(listOf(ProductRelease.Channel.RELEASE))
-//                sinceBuild.set("241") // 23x doesn't support vcs
-//                untilBuild.set("243.*")
-//            }
             select {
                 types.set(
                     listOf(
@@ -382,27 +376,5 @@ intellijPlatformTesting {
                 robotServerPlugin()
             }
         }
-    }
-}
-
-// Task to run the llama.cpp test
-tasks.register<Test>("runLlamaCppTest") {
-    group = "verification"
-    description = "Run the llama.cpp integration test"
-
-    useJUnitPlatform()
-    filter {
-        includeTestsMatching("dev.sweep.assistant.autocomplete.llamacpp.LlamaCppTest")
-    }
-
-    // Enable the test
-    systemProperty("llama.test.enabled", "true")
-
-    // Optional: override model path
-    // systemProperty("llama.model.path", "/path/to/your/model.gguf")
-
-    testLogging {
-        events("passed", "skipped", "failed", "standardOut", "standardError")
-        showStandardStreams = true
     }
 }

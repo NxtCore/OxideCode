@@ -17,7 +17,6 @@ import dev.sweep.assistant.autocomplete.edit.NextEditAutocompleteResponse
 import dev.sweep.assistant.autocomplete.edit.RecentEditsTracker
 import dev.sweep.assistant.settings.SweepSettings
 import dev.sweep.assistant.settings.SweepSettingsParser
-import dev.sweep.assistant.utils.CompressionUtils
 import dev.sweep.assistant.utils.encodeString
 import dev.sweep.assistant.utils.getCurrentSweepPluginVersion
 import dev.sweep.assistant.utils.getDebugInfo
@@ -99,12 +98,9 @@ class AutocompleteIpResolverService(
     /**
      * Checks if the user is pointed to the cloud version of the plugin.
      * Returns true if either:
-     * 1. The user is on the cloud environment (plugin version), OR
-     * 2. Their backend URL is pointed to https://backend.app.sweep.dev
+     * 1. The user is on the cloud environment (plugin version)
      */
-    private fun isPointedToCloud(): Boolean =
-        SweepSettingsParser.isCloudEnvironment() ||
-            SweepSettings.getInstance().baseUrl == "https://backend.app.sweep.dev"
+    private fun isPointedToCloud(): Boolean = SweepSettingsParser.isCloudEnvironment()
 
     // HTTP client with connection pooling and keep-alive
     private val httpClient =
@@ -267,7 +263,10 @@ class AutocompleteIpResolverService(
         )
     }
 
-    private suspend fun fetchDirectProviderAutocomplete(request: NextEditAutocompleteRequest): NextEditAutocompleteResponse? {
+    private suspend fun fetchDirectProviderAutocomplete(
+        request: NextEditAutocompleteRequest,
+        requestId: String,
+    ): NextEditAutocompleteResponse? {
         val provider = SweepSettings.getInstance().directAutocompleteProvider
         val filePath = request.file_path
         val cursor = request.cursor_position.coerceIn(0, request.file_contents.length)
@@ -281,18 +280,18 @@ class AutocompleteIpResolverService(
                     baseUrl = provider.baseUrl.trim().trimEnd('/'),
                     apiKey = provider.apiKey.trim(),
                     model = provider.model.trim(),
-                    completionModel = provider.completionModel.trim(),
-                    nesPromptStyle = "sweep",
+                    completionModel = "",
+                    nesPromptStyle = provider.nesPromptStyle.trim().ifBlank { "sweep" },
                     deltasJson = deltasJson,
                     cursorFilepath = filePath,
                     cursorLine = cursorLine,
                     cursorCol = cursorCol,
                     fileContent = request.file_contents,
                     language = detectLanguage(filePath),
-                    completionEndpoint = "chat_completions",
+                    completionEndpoint = provider.completionEndpoint.trim().ifBlank { "chat_completions" },
                     originalFileContent = request.original_file_contents,
                     calibrationLogDir = "",
-                    requestId = rustCoreBridge.newRequestId("ij-direct-next-edit"),
+                    requestId = requestId,
                 )
             }.takeIf { it.isNotBlank() } ?: return null
 
@@ -306,9 +305,12 @@ class AutocompleteIpResolverService(
      * This centralizes the entire HTTP request flow in the DNS resolver service.
      */
     @RequiresBackgroundThread
-    suspend fun fetchNextEditAutocomplete(request: NextEditAutocompleteRequest): NextEditAutocompleteResponse? {
+    suspend fun fetchNextEditAutocomplete(
+        request: NextEditAutocompleteRequest,
+        requestId: String = rustCoreBridge.newRequestId("ij-next-edit"),
+    ): NextEditAutocompleteResponse? {
         if (useDirectAutocompleteProvider()) {
-            return fetchDirectProviderAutocomplete(request)
+            return fetchDirectProviderAutocomplete(request, requestId)
         }
 
         return try {
@@ -334,7 +336,7 @@ class AutocompleteIpResolverService(
                         debugInfo = getDebugInfo(),
                         requestJson = postData,
                         contentEncoding = "",
-                        requestId = rustCoreBridge.newRequestId("ij-next-edit"),
+                        requestId = requestId,
                     )
                 }
 
@@ -365,6 +367,14 @@ class AutocompleteIpResolverService(
         }
     }
 
+    fun cancelRequest(requestId: String) {
+        runCatching {
+            rustCoreBridge.cancelRequest(requestId)
+        }.onFailure { e ->
+            logger.debug("Failed to cancel rust request $requestId", e)
+        }
+    }
+
     init {
         startPeriodicResolution()
         startPeriodicHealthCheck()
@@ -379,8 +389,8 @@ class AutocompleteIpResolverService(
             return SweepSettings.getInstance().baseUrl
         }
 
-        // Always use https://autocomplete.sweep.dev directly, let OS handle DNS caching
-        return "https://autocomplete.sweep.dev"
+        // Always use http://localhost:11434 directly
+        return "http://localhost:11434"
     }
 
     /**

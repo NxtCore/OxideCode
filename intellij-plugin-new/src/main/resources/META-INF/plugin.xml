@@ -5,27 +5,15 @@
 
     <!-- Public plugin name should be written in Title Case.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-name -->
-    <name>Sweep</name>
+    <name>OxideCode</name>
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor email="support@sweep.dev" url="https://sweep.dev">Sweep AI</vendor>
+    <vendor email="development@nxtcore.app" url="https://">OxideCode</vendor>
 
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Simple HTML elements (text formatting, paragraphs, and lists) can be added inside of <![CDATA[ ]]> tag.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
-    <description><![CDATA[
-    <strong>This plugin is only for Enterprise customers</strong> with private installations (i.e. you've been linked to this). Other users should use the standard extension in the <a href="https://plugins.jetbrains.com/plugin/26860-sweep-ai">JetBrains Marketplace</a>.
-    ]]></description>
-    <change-notes><![CDATA[
-<ul>
-  <li><b>Bug Fixes and Improvements</b>
-    <ul>
-        <li>Streamed file modifications now show additions and removals as they happen.</li>
-    </ul>
-  </li>
-</ul>
-<p>Check out our <a href="https://docs.sweep.dev">documentation</a> or <a href="https://discord.com/invite/sweep">Discord</a>!</p>
-    ]]></change-notes>
+    <description>NES Autocomplete, Sweep, Zeta and Mercury Edit Models</description>
 
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
@@ -42,24 +30,24 @@
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow
-                id="Sweep AI"
+                id="OxideCode"
                 anchor="right"
-                icon="/icons/sweep13x13.svg"
+                icon="/icons/oxidecode13x13.svg"
                 factoryClass="dev.sweep.assistant.Sweep"
                 canCloseContents="true"/>
         <postStartupActivity implementation="dev.sweep.assistant.startup.SweepStartupActivity"/>
         <postStartupActivity implementation="dev.sweep.assistant.startup.FirstRunSettingsActivity"/>
         <postStartupActivity implementation="dev.sweep.assistant.startup.FindActionInitializer"/>
         <notificationGroup id="Error Notifications" displayType="BALLOON"/>
-        <notificationGroup id="Sweep AI Notifications" displayType="BALLOON"/>
-        <notificationGroup id="Sweep Autocomplete" displayType="BALLOON"/>
-        <notificationGroup id="Sweep Version Update" displayType="BALLOON"/>
-        <notificationGroup id="Sweep Plugin Conflicts" displayType="BALLOON"/>
+        <notificationGroup id="OxideCode Notifications" displayType="BALLOON"/>
+        <notificationGroup id="OxideCode Autocomplete" displayType="BALLOON"/>
+        <notificationGroup id="OxideCode Version Update" displayType="BALLOON"/>
+        <notificationGroup id="OxideCode Plugin Conflicts" displayType="BALLOON"/>
         <applicationService serviceImplementation="dev.sweep.assistant.settings.SweepSettings"/>
         <applicationService serviceImplementation="dev.sweep.assistant.settings.SweepMetaData"/>
         <projectConfigurable
                 groupId="tools"
-                displayName="Sweep"
+                displayName="OxideCode"
                 id="dev.sweep.assistant.settings.SweepSettingsConfigurable"
                 instance="dev.sweep.assistant.settings.SweepSettingsConfigurable"/>
         <!--        <postStartupActivity implementation="dev.sweep.assistant.startup.SelectionPopupStartupActivity"/>-->
@@ -72,9 +60,9 @@
         <intentionAction>
             <language>any</language>
             <className>dev.sweep.assistant.actions.SweepFixIntentionAction</className>
-            <category>Sweep</category>
+            <category>OxideCode</category>
         </intentionAction>
-        <statusBarWidgetFactory id="SweepAutocompleteStatus"
+        <statusBarWidgetFactory id="OxideCodeAutocompleteStatus"
                                 implementation="dev.sweep.assistant.statusbar.AutocompleteStatusBarWidgetFactory"/>
     </extensions>
 

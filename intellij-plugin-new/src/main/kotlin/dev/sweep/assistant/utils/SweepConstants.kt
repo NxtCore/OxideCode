@@ -4,7 +4,6 @@ import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.JBColor
-import dev.sweep.assistant.settings.SweepEnvironmentConstants.Defaults.BILLING_URL
 import dev.sweep.assistant.theme.SweepColors
 import java.awt.Color
 import javax.swing.text.html.StyleSheet
@@ -124,15 +123,7 @@ object SweepConstants {
             "dev.sweep.assistant.apply.RejectCodeBlockAction" to "Reject Code Block",
         )
 
-    const val SWEEP_FILE_PROTOCOL = "sweep"
-
     val diffFiles = setOf("TabPreviewDiffVirtualFile", "Diff")
-
-    val SWEEP_ASCII_ART = "https://docs.sweep.dev/agent, https://discord.gg/sweep"
-
-    val SWEEP_BILLING_MESSAGE =
-        "Your subscription needs to be updated. A billing page has been opened in your browser." +
-            " Please complete the process ([$BILLING_URL]($BILLING_URL)) to use Sweep."
 
     enum class AutocompleteMode {
         DEFAULT,

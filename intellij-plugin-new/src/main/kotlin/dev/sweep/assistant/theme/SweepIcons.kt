@@ -29,9 +29,9 @@ object SweepIcons {
     // IconLoader internally caches these, so performance is not affected
     val Plus get() = loadIcon("/icons/plus.svg")
     val At get() = loadIcon("/icons/at.svg")
-    val SweepIcon get() = loadIcon("/icons/sweep13x13.svg")
-    val Sweep16x16 get() = loadIcon("/icons/sweep16x16.svg")
-    val BigSweepIcon get() = loadIcon("/icons/sweep.svg")
+    val SweepIcon get() = loadIcon("/icons/oxidecode13x13.svg")
+    val Sweep16x16 get() = loadIcon("/icons/oxidecode16x16.svg")
+    val BigSweepIcon get() = loadIcon("/icons/oxidecode.svg")
     val SendArrow get() = loadIcon("/icons/sendArrow.svg")
     val SendUpArrow get() = loadIcon("/icons/sendUpArrow.svg")
     val Enter get() = loadIcon("/icons/enter.svg").scale(12f)

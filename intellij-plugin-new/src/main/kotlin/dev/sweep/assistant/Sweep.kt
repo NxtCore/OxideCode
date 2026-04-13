@@ -37,6 +37,9 @@ import dev.sweep.assistant.utils.SweepConstants
 import dev.sweep.assistant.utils.SweepConstants.TOOLWINDOW_NAME
 import dev.sweep.assistant.utils.getGithubRepoName
 import dev.sweep.assistant.utils.setSoftFileDescriptorLimit
+import java.awt.BorderLayout
+import javax.swing.JLabel
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
 class Sweep :
@@ -104,12 +107,26 @@ class Sweep :
         toolWindow: ToolWindow,
         showToolWindow: Boolean = true,
     ) {
+        displayWipPlaceholder(project, toolWindow, showToolWindow)
+    }
+
+    private fun displayWipPlaceholder(
+        project: Project,
+        toolWindow: ToolWindow,
+        showToolWindow: Boolean = true,
+    ) {
         val content =
             toolWindow.contentManager.factory
                 .createContent(
-                    panel {
-                        row { label("Loading...") }
-                    }.withBorder(JBUI.Borders.empty(12)),
+                    JPanel(BorderLayout()).apply {
+                        border = JBUI.Borders.empty(16)
+                        add(
+                            JLabel("OxideCode UI is WIP in this plugin build. Existing chat code is still present but temporarily hidden.").apply {
+                                border = JBUI.Borders.empty(8)
+                            },
+                            BorderLayout.NORTH,
+                        )
+                    },
                     SweepConstants.NEW_CHAT,
                     true,
                 ).apply {
@@ -117,205 +134,13 @@ class Sweep :
                     putUserData(SHOW_CONTENT_ICON, true)
                 }
 
-        ApplicationManager.getApplication().invokeLater {
-            try {
-                toolWindow.contentManager.run {
-                    // Add new content BEFORE removing old content to prevent contentManager from becoming empty.
-                    // This avoids triggering TabManager's contentRemoved -> newChat() auto-create behavior.
-                    val oldContents = contents.toList()
-                    addContent(content)
-                    oldContents.forEach { removeContent(it, true) }
-                }
-            } catch (e: NullPointerException) {
-                // Retry after 200ms delay on background thread, then schedule back to UI thread
-                ApplicationManager.getApplication().executeOnPooledThread {
-                    Thread.sleep(200)
-                    ApplicationManager.getApplication().invokeLater {
-                        try {
-                            toolWindow.contentManager.run {
-                                val oldContents = contents.toList()
-                                addContent(content)
-                                oldContents.forEach { removeContent(it, true) }
-                            }
-                        } catch (e2: Exception) {
-                            // Log and fail silently
-                            Logger
-                                .getInstance(Sweep::class.java)
-                                .warn("Failed to add content to ToolWindow after retry", e2)
-                        }
-                    }
-                }
-            }
-        }
-
-        getGithubRepoName(project) { foundRepoName ->
-            ApplicationManager.getApplication().invokeLater {
-                if (foundRepoName == null) {
-                    createNoGitRepoPage(project, toolWindow)
-                    return@invokeLater
-                }
-                SweepConstantsService.getInstance(project).repoName = foundRepoName
-                toolWindow.title = SweepConstants.NEW_CHAT
-                toolWindow.isAutoHide = false
-
-                SweepActionManager.getInstance(project).newChatAction =
-                    createCustomAction(
-                        project = project,
-                        text = if (SweepMetaData.getInstance().newButtonClicks >= 3) "" else "New Chat",
-                        description = "Start a new chat ${SweepConstants.META_KEY}N",
-                        icon = AllIcons.General.Add,
-                    ) {
-                        SweepMetaData.getInstance().newButtonClicks++
-                        SweepComponent.getInstance(project).createNewChat()
-                    }
-
-                SweepActionManager.getInstance(project).historyAction =
-                    createCustomAction(
-                        project = project,
-                        text = if (SweepMetaData.getInstance().historyButtonClicks >= 2) "" else "History",
-                        description = "View chat history",
-                        icon = AllIcons.Vcs.History,
-                    ) {
-                        SweepMetaData.getInstance().historyButtonClicks++
-                        ChatHistoryComponent.getInstance(project).showChatHistoryPopup()
-                    }
-
-                SweepActionManager.getInstance(project).showTutorialAction =
-                    object : AnAction("Sweep Tutorial", "", SweepIcons.SweepIcon.scale(16f)) {
-                        override fun actionPerformed(e: AnActionEvent) {
-                            TutorialPage.showAutoCompleteTutorial(project, forceShow = true)
-                        }
-                    }
-
-                // Only create report action if user hasn't reached usage thresholds
-                val shouldShowReport =
-                    SweepMetaData.getInstance().reportButtonClicks < 1 &&
-                        SweepMetaData.getInstance().chatsSent < 5 &&
-                        SweepMetaData.getInstance().autocompleteAcceptCount < 50
-                SweepActionManager.getInstance(project).reportAction =
-                    if (!shouldShowReport) {
-                        null
-                    } else {
-                        createCustomAction(
-                            project = project,
-                            text = "Feedback",
-                            description = "Feedback",
-                            icon = AllIcons.Actions.Report,
-                        ) {
-                            SweepMetaData.getInstance().reportButtonClicks++
-                            try {
-                                com.intellij.ide.BrowserUtil.browse(
-                                    java.net.URI(
-                                        "https://app.sweep.dev/feedback",
-                                    ),
-                                )
-                            } catch (ex: Exception) {
-                                // Silently handle any exceptions
-                            }
-                        }
-                    }
-
-                SweepActionManager.getInstance(project).settingsAction =
-                    createCustomAction(
-                        project = project,
-                        text = if (SweepMetaData.getInstance().configButtonClicks >= 3) "" else "Settings",
-                        description = "Open Preferences",
-                        icon = AllIcons.General.Settings,
-                    ) {
-                        SweepMetaData.getInstance().configButtonClicks++
-                        SweepConfig.getInstance(project).showConfigPopup()
-                    }
-
-                SweepActionManager.getInstance(project).openSettingsAction =
-                    object : AnAction("Sweep Settings", "Configure Sweep", SweepIcons.SweepIcon.scale(16f)) {
-                        override fun actionPerformed(e: AnActionEvent) {
-                            SweepConfig.getInstance(project).showConfigPopup()
-                        }
-                    }
-
-                ActionManager.getInstance().run {
-                    unregisterAction("SweepNewChat")
-                    SweepActionManager.getInstance(project).newChatAction?.let { registerAction("SweepNewChat", it) }
-                    unregisterAction("SweepChatHistory")
-                    SweepActionManager.getInstance(project).historyAction?.let {
-                        registerAction(
-                            "SweepChatHistory",
-                            it,
-                        )
-                    }
-                    unregisterAction("SweepTutorial")
-                    SweepActionManager.getInstance(project).showTutorialAction?.let {
-                        registerAction(
-                            "SweepTutorial",
-                            it,
-                        )
-                    }
-                    unregisterAction("SweepReport")
-                    if (shouldShowReport) {
-                        SweepActionManager.getInstance(project).reportAction?.let { registerAction("SweepReport", it) }
-                    }
-                    unregisterAction("SweepSettings")
-                    SweepActionManager.getInstance(project).settingsAction?.let { registerAction("SweepSettings", it) }
-                    unregisterAction("SweepOpenSettings")
-                    SweepActionManager.getInstance(project).openSettingsAction?.let {
-                        registerAction(
-                            "SweepOpenSettings",
-                            it,
-                        )
-                    }
-                }
-                toolWindow.setTitleActions(
-                    listOfNotNull(
-                        SweepActionManager.getInstance(project).historyAction,
-                        SweepActionManager.getInstance(project).reportAction,
-                        SweepActionManager.getInstance(project).newChatAction,
-                        SweepActionManager.getInstance(project).settingsAction,
-                    ),
-                )
-                val connection = project.messageBus.connect(this) // myDisposable ensures cleanup
-
-                // Create a proper session with its own UI component (same as newChat())
-                // This eliminates the legacy path in TabManager
-                val sessionManager = SweepSessionManager.getInstance(project)
-                val session = sessionManager.createSession()
-                val sessionComponent = sessionManager.createSessionUIComponent(session)
-
-                // Set the session's UI component as the content for the tool window
-                content.component = sessionComponent.component
-
-                // Bind session to content so TabManager can find it
-                sessionManager.bindSessionToContent(session, content)
-
-                // Update TabManager's conversationIdMap for this content.
-                // This is needed because contentAdded fires before the session is created,
-                // so the map wasn't populated in the listener. Without this, the tab icon
-                // won't show during streaming for the first tab.
-                TabManager.getInstance(project).conversationIdMap[content] = session.conversationId
-
-                // Set this session as the active session in SweepSessionManager.
-                // This is critical because selectionChanged fires before the session is bound,
-                // so the normal activation path in TabManager doesn't set the active session.
-                // Without this, MessageList.activeConversationId falls back to the fallbackMessageList
-                // which has a different conversationId, causing "No session found" errors in Stream.start.
-                sessionManager.setActiveSession(session.sessionId)
-
-                // Activate the session to populate the UI (ChatComponent, RecentChats, etc.)
-                sessionComponent.activate()
-
-                toolWindow.component.addMouseListener(
-                    MouseClickedAdapter {
-                        ChatComponent.getInstance(project).textField.requestFocusInWindow()
-                    },
-                )
-
-                // Register alt+Backspace on the session component to trigger CancelStreamAction.
-                CancelStreamAction.registerCustomShortcutSet(
-                    CustomShortcutSet.fromString("shift BACK_SPACE"),
-                    sessionComponent.component,
-                    this@Sweep,
-                )
-            }
-        }
+        toolWindow.title = SweepConstants.NEW_CHAT
+        toolWindow.isAutoHide = false
+        toolWindow.setTitleActions(
+            listOfNotNull(
+                SweepActionManager.getInstance(project).settingsAction,
+            ),
+        )
 
         if (showToolWindow) {
             toolWindow.show()
@@ -386,11 +211,7 @@ class Sweep :
                         wasConfigured = isNowConfigured
 
                         if (isNowConfigured) {
-                            ApplicationManager.getApplication().invokeLater {
-                                if (!project.isDisposed && project.isOpen) {
-                                    ToolWindowManager.getInstance(project).getToolWindow(TOOLWINDOW_NAME)?.show()
-                                }
-                            }
+                            // Do not auto-open the tool window on settings changes.
                         }
                     },
                 )

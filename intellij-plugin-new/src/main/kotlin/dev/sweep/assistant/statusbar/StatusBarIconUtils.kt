@@ -12,7 +12,7 @@ object StatusBarIconUtils {
      * @return A composite icon with Sweep logo + cog overlay
      */
     fun createSweepWithCogIcon(opacity: Float = 1.0f): Icon {
-        val sweepIcon = IconLoader.getIcon("/icons/sweep16x16.svg", StatusBarIconUtils::class.java)
+        val sweepIcon = IconLoader.getIcon("/icons/oxidecode16x16.svg", StatusBarIconUtils::class.java)
         val cogIcon = AllIcons.General.Settings
 
         return object : Icon {

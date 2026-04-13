@@ -11,7 +11,7 @@ import dev.sweep.assistant.utils.SweepConstants
  * where users can create custom prompts.
  */
 class AddCustomPromptAction : AnAction() {
-    private val icon = IconLoader.getIcon("/icons/sweep16x16.svg", AddCustomPromptAction::class.java)
+    private val icon = IconLoader.getIcon("/icons/oxidecode16x16.svg", AddCustomPromptAction::class.java)
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return

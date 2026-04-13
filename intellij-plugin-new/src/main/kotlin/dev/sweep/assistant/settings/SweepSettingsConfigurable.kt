@@ -33,8 +33,7 @@ class SweepSettingsConfigurable(
         centerPanel.layout = BoxLayout(centerPanel, BoxLayout.Y_AXIS)
         centerPanel.border = JBUI.Borders.empty(20)
 
-        val messageLabel =
-            JLabel("You can configure Sweep below. The settings are also located in the Sweep Sidebar (${SweepConstants.META_KEY}J). ")
+        val messageLabel = JLabel("You can configure OxideCode below. The settings are also located in the OxideCode Sidebar (${SweepConstants.META_KEY}J). ")
         messageLabel.font = messageLabel.font.deriveFont(Font.BOLD, 16f)
         messageLabel.alignmentX = Component.CENTER_ALIGNMENT
         centerPanel.add(messageLabel)

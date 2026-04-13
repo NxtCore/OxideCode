@@ -26,7 +26,7 @@ import dev.sweep.assistant.utils.showNotification
  */
 class ReviewPRAction : AnAction() {
     companion object {
-        private val ICON = IconLoader.getIcon("/icons/sweep16x16.svg", ReviewPRAction::class.java)
+        private val ICON = IconLoader.getIcon("/icons/oxidecode16x16.svg", ReviewPRAction::class.java)
     }
 
     private val logger = Logger.getInstance(ReviewPRAction::class.java)

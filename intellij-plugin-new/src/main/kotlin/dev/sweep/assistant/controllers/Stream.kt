@@ -26,7 +26,6 @@ import dev.sweep.assistant.components.ChatComponent
 import dev.sweep.assistant.data.*
 import dev.sweep.assistant.entities.EntitiesCache
 import dev.sweep.assistant.services.*
-import dev.sweep.assistant.settings.SweepEnvironmentConstants.Defaults.BILLING_URL
 import dev.sweep.assistant.settings.SweepMetaData
 import dev.sweep.assistant.tracking.EventType
 import dev.sweep.assistant.tracking.TelemetryService
@@ -726,8 +725,6 @@ class Stream(
                             } else if (e.message?.contains("401") == true) {
                                 "Error 401: Authentication failed - Please check your authentication settings."
                             } else if (e.message?.contains("402") == true) {
-                                // Returned by either cloud version or by trial self-hosted version.
-                                BrowserUtil.browse(BILLING_URL)
                                 "Error 402: Trial Ended - You've been redirected to the billing page to upgrade your plan."
                             } else if (e.message?.contains("Trial period ended") == true) {
                                 "Trial period ended. Please contact william@sweep.dev to continue using Sweep."
@@ -745,26 +742,7 @@ class Stream(
                         else -> "${e.message}"
                     }
 
-                // Create specific notification for 402 errors
-                if (e.message?.contains("402") == true) {
-                    showNotification(
-                        project,
-                        "Sweep Trial Ended",
-                        "Your trial has ended. You've been redirected to the billing page to upgrade your plan.",
-                        notificationGroup = "Sweep AI Notifications",
-                        notificationType = NotificationType.WARNING,
-                        action =
-                            object : NotificationAction("Open Billing") {
-                                override fun actionPerformed(
-                                    e: AnActionEvent,
-                                    notification: Notification,
-                                ) {
-                                    BrowserUtil.browse(BILLING_URL)
-                                    notification.expire()
-                                }
-                            },
-                    )
-                } else {
+
                     val notification =
                         NotificationGroupManager
                             .getInstance()
@@ -790,7 +768,7 @@ class Stream(
 
                     notification.notify(project)
                 }
-            }
+
         } finally {
             currentMarkdownDisplay.cursorPanel.setText(null)
             MessagesComponent.getInstance(project).showScrollbar()

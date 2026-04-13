@@ -13,7 +13,7 @@ import dev.sweep.assistant.utils.SweepConstants
 
 class AddToContextFromProjectAction : AnAction() {
     companion object {
-        private val ICON = IconLoader.getIcon("/icons/sweep16x16.svg", AddToContextFromProjectAction::class.java)
+        private val ICON = IconLoader.getIcon("/icons/oxidecode16x16.svg", AddToContextFromProjectAction::class.java)
     }
 
     init {

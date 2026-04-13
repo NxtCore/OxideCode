@@ -209,6 +209,7 @@ class AutocompleteMetricsTracker(
         numDefinitionsRetrieved: Int? = null,
         numUsagesRetrieved: Int? = null,
     ) {
+        return
         scope.launch(Dispatchers.IO + CoroutineName("AutocompleteMetricsTracker")) {
             try {
                 val (additions, deletions) = additionsAndDeletions

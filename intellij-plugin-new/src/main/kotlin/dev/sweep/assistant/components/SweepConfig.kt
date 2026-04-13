@@ -3313,7 +3313,7 @@ class SweepConfig(
             }
 
         val availableDirectModels =
-            (directProvider.availableModels + listOf(directProvider.model, directProvider.completionModel))
+            (directProvider.availableModels + listOf(directProvider.model))
                 .filter { it.isNotBlank() }
                 .distinct()
                 .toMutableList()
@@ -3330,16 +3330,27 @@ class SweepConfig(
             }
         }
 
-        val directAutocompleteFastModelBox = ComboBox(availableDirectModels.toTypedArray()).apply {
-            isEditable = true
+        val directAutocompletePromptStyleBox = ComboBox(arrayOf("generic", "zeta1", "zeta2", "sweep")).apply {
             withSweepFont(project)
             alignmentX = Component.LEFT_ALIGNMENT
             maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
-            selectedItem = directProvider.completionModel
+            selectedItem = directProvider.nesPromptStyle.ifBlank { "sweep" }
             addActionListener {
-                val selectedModel = (editor.item as? String ?: selectedItem as? String).orEmpty().trim()
+                val selectedPromptStyle = (selectedItem as? String).orEmpty().trim()
                 sweepSettings.directAutocompleteProvider =
-                    sweepSettings.directAutocompleteProvider.copy(completionModel = selectedModel)
+                    sweepSettings.directAutocompleteProvider.copy(nesPromptStyle = selectedPromptStyle)
+            }
+        }
+
+        val directAutocompleteEndpointBox = ComboBox(arrayOf("completions", "chat_completions")).apply {
+            withSweepFont(project)
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+            selectedItem = directProvider.completionEndpoint.ifBlank { "chat_completions" }
+            addActionListener {
+                val selectedEndpoint = (selectedItem as? String).orEmpty().trim()
+                sweepSettings.directAutocompleteProvider =
+                    sweepSettings.directAutocompleteProvider.copy(completionEndpoint = selectedEndpoint)
             }
         }
 
@@ -3360,16 +3371,12 @@ class SweepConfig(
         fun updateModelComboItems(models: List<String>) {
             val normalized = models.filter { it.isNotBlank() }.distinct()
             val currentModel = (directAutocompleteModelBox.editor.item as? String ?: directAutocompleteModelBox.selectedItem as? String).orEmpty()
-            val currentFastModel = (directAutocompleteFastModelBox.editor.item as? String ?: directAutocompleteFastModelBox.selectedItem as? String).orEmpty()
 
             directAutocompleteModelBox.removeAllItems()
-            directAutocompleteFastModelBox.removeAllItems()
             normalized.forEach {
                 directAutocompleteModelBox.addItem(it)
-                directAutocompleteFastModelBox.addItem(it)
             }
             directAutocompleteModelBox.selectedItem = currentModel.ifBlank { normalized.firstOrNull() ?: "" }
-            directAutocompleteFastModelBox.selectedItem = currentFastModel
         }
 
         fun fetchDirectAutocompleteModels(): List<String> {
@@ -4172,7 +4179,7 @@ class SweepConfig(
                                         },
                                     )
                                     add(
-                                        JLabel("Use an OpenAI-compatible server for inline autocomplete.").apply {
+                                        JLabel("Use an OpenAI-compatible server for inline autocomplete and chat.").apply {
                                             withSweepFont(project, scale = 0.85f)
                                             foreground = JBColor.GRAY
                                             font = font.deriveFont(Font.ITALIC)
@@ -4189,8 +4196,11 @@ class SweepConfig(
                                     add(JLabel("Model").withSweepFont(project, bold = true).apply { alignmentX = Component.LEFT_ALIGNMENT })
                                     add(directAutocompleteModelBox)
                                     add(Box.createRigidArea(Dimension(0, 6.scaled)))
-                                    add(JLabel("Completion model (optional)").withSweepFont(project, bold = true).apply { alignmentX = Component.LEFT_ALIGNMENT })
-                                    add(directAutocompleteFastModelBox)
+                                    add(JLabel("Completion type").withSweepFont(project, bold = true).apply { alignmentX = Component.LEFT_ALIGNMENT })
+                                    add(directAutocompletePromptStyleBox)
+                                    add(Box.createRigidArea(Dimension(0, 6.scaled)))
+                                    add(JLabel("Completion endpoint").withSweepFont(project, bold = true).apply { alignmentX = Component.LEFT_ALIGNMENT })
+                                    add(directAutocompleteEndpointBox)
                                     add(Box.createRigidArea(Dimension(0, 4.scaled)))
                                     add(directAutocompleteModelStatusLabel)
                                     add(Box.createRigidArea(Dimension(0, 6.scaled)))
@@ -4244,7 +4254,7 @@ class SweepConfig(
                                     add(disablePluginConflictCheckbox)
                                     add(
                                         JLabel(
-                                            "Sweep will automatically attempt to disable the autocomplete feature for conflicting plugins when this is enabled",
+                                            "OxideCode will automatically attempt to disable the autocomplete feature for conflicting plugins when this is enabled",
                                         ).apply {
                                             withSweepFont(project, scale = 0.85f)
                                             foreground = JBColor.GRAY
@@ -4265,7 +4275,7 @@ class SweepConfig(
                                     add(showAutocompleteBadgeCheckbox)
                                     add(
                                         JLabel(
-                                            "Display the Sweep logo next to autocomplete suggestions",
+                                            "Display the OxideCode logo next to autocomplete suggestions",
                                         ).apply {
                                             withSweepFont(project, scale = 0.85f)
                                             foreground = JBColor.GRAY
@@ -4335,7 +4345,7 @@ class SweepConfig(
 
                         // Agent Autocomplete Suggestions toggle
                         gbc.gridy++
-                        add(
+                        /*add(
                             JPanel().apply {
                                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                                 border = JBUI.Borders.empty(8, 16, 12, 16)
@@ -4362,7 +4372,7 @@ class SweepConfig(
                                 )
                             },
                             gbc,
-                        )
+                        )*/
                     }
 
                 // Autocomplete exclusion patterns panel (similar to commit template)
@@ -4732,220 +4742,6 @@ class SweepConfig(
 
                         // Add filler to push everything to the top
                         gbc.gridy = 21 // Use a high number after the feedback panel
-                        gbc.weighty = 1.0
-                        gbc.fill = GridBagConstraints.BOTH
-                        add(JPanel(), gbc)
-                    }
-
-                // Second tab - API Settings
-                val apiSettingsPanel =
-                    JPanel(GridBagLayout()).apply {
-                        border = JBUI.Borders.empty()
-                        val gbc =
-                            GridBagConstraints().apply {
-                                gridx = 0
-                                weightx = 1.0
-                                fill = GridBagConstraints.HORIZONTAL
-                                insets = JBUI.emptyInsets()
-                                anchor = GridBagConstraints.NORTHWEST
-                            }
-
-                        // API Settings header
-                        gbc.gridy = 0
-
-                        add(
-                            JSeparator().apply {
-                                foreground = SweepColors.borderColor
-                                border = JBUI.Borders.empty(8, 16)
-                            },
-                            gbc,
-                        )
-
-                        // Add settings description
-                        gbc.gridy = 1
-                        add(
-                            JPanel(BorderLayout()).apply {
-                                border = JBUI.Borders.empty(0, 16, 8, 16)
-                                add(
-                                    JLabel(SETTINGS_DESCRIPTION).withSweepFont(project),
-                                    BorderLayout.WEST,
-                                )
-                            },
-                            gbc,
-                        )
-
-                        // GitHub Token
-                        gbc.gridy = 2
-                        add(
-                            JPanel().apply {
-                                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                                border = JBUI.Borders.empty(8, 16)
-
-                                val tokenLabel =
-                                    JLabel(
-                                        if (sweepSettings.githubToken.isNotBlank()) {
-                                            "<html><b>Sweep Token</b> <font color='#4CAF50'>✓ signed in</font></html>"
-                                        } else {
-                                            "<html><b>Sweep Token</b></html>"
-                                        },
-                                    ).apply {
-                                        border = JBUI.Borders.empty(0, 4, 4, 0)
-                                    }
-
-                                add(tokenLabel)
-
-                                // Fetch username asynchronously if token is present
-                                if (sweepSettings.githubToken.isNotBlank()) {
-                                    ApplicationManager.getApplication().executeOnPooledThread {
-                                        val usernameResponse = runBlocking { getUsername() }
-                                        ApplicationManager.getApplication().invokeLater {
-                                            if (usernameResponse != null && usernameResponse.username.isNotBlank()) {
-                                                tokenLabel.text =
-                                                    "<html><b>Sweep Token</b> <font color='#4CAF50'>✓ signed in as ${usernameResponse.username.replace(
-                                                        "<",
-                                                        "&lt;",
-                                                    ).replace(">", "&gt;").replace("&", "&amp;")}</font></html>"
-
-                                                // If backend enforces privacy mode, disable the checkbox and force it to be selected
-                                                if (usernameResponse.privacyModeEnabled) {
-                                                    privacyModeCheckBox?.let { checkbox ->
-                                                        checkbox.isSelected = true
-                                                        checkbox.isEnabled = false
-                                                        checkbox.toolTipText =
-                                                            "Privacy mode is enforced by your organization and cannot be disabled. Sweep will not store, train on, or evaluate models on any of your code or prompts."
-                                                    }
-                                                }
-                                            } else {
-                                                // Show error state when username fetch fails
-                                                tokenLabel.text =
-                                                    "<html><b>Sweep Token</b> <font color='#F44336'>✗ Your token is incorrect, please click \"Switch Accounts\" to sign in again</font></html>"
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Token field
-                                add(
-                                    githubTokenField.apply {
-                                        alignmentX = Component.LEFT_ALIGNMENT
-                                    },
-                                )
-                                add(
-                                    createCommentLabel(GITHUB_TOKEN_COMMENT).apply {
-                                        border = JBUI.Borders.empty(4, 4, 0, 0)
-                                    },
-                                )
-                            },
-                            gbc,
-                        )
-
-                        // Base URL
-                        gbc.gridy = 3
-                        add(
-                            JPanel().apply {
-                                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                                border = JBUI.Borders.empty(8, 16)
-                                add(
-                                    JLabel("<html><b>Sweep API URL</b></html>").apply {
-                                        border = JBUI.Borders.empty(0, 4, 4, 0)
-                                    },
-                                )
-                                add(
-                                    baseUrlField.apply {
-                                        alignmentX = Component.LEFT_ALIGNMENT
-                                    },
-                                )
-                                add(
-                                    createCommentLabel("The Sweep API endpoint (e.g., https://backend.app.sweep.dev or http://localhost:8080)").apply {
-                                        border = JBUI.Borders.empty(4, 4, 0, 0)
-                                        withSweepFont(project, scale = 0.9f)
-                                    },
-                                )
-
-                                if (SweepSettingsParser.isDeveloperMode()) {
-                                    add(
-                                        createCommentLabel("(Developer only)").apply {
-                                            border = JBUI.Borders.empty(8, 4, 4, 0)
-                                            withSweepFont(project, scale = 0.9f)
-                                        },
-                                    )
-
-                                    val buttonPanel =
-                                        JPanel().apply {
-                                            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                                            alignmentX = Component.LEFT_ALIGNMENT
-                                            border = JBUI.Borders.emptyLeft(4)
-                                        }
-
-                                    val prodButton =
-                                        JButton("https://backend.app.sweep.dev").apply {
-                                            withSweepFont(project, scale = 0.9f)
-                                            alignmentX = Component.LEFT_ALIGNMENT
-                                            addActionListener {
-                                                baseUrlField.text = "https://backend.app.sweep.dev"
-                                                sweepSettings.baseUrl = "https://backend.app.sweep.dev"
-                                            }
-                                        }
-
-                                    val localButton =
-                                        JButton("http://localhost:8080").apply {
-                                            withSweepFont(project, scale = 0.9f)
-                                            alignmentX = Component.LEFT_ALIGNMENT
-                                            addActionListener {
-                                                baseUrlField.text = "http://localhost:8080"
-                                                sweepSettings.baseUrl = "http://localhost:8080"
-                                            }
-                                        }
-
-                                    buttonPanel.add(prodButton)
-                                    buttonPanel.add(Box.createRigidArea(Dimension(0, 4)))
-                                    buttonPanel.add(localButton)
-
-                                    add(buttonPanel)
-                                }
-                            },
-                            gbc,
-                        )
-
-                        // Relogin button at bottom - only in cloud environment
-                        if (SweepSettingsParser.isCloudEnvironment()) {
-                            gbc.gridy = 4
-                            add(
-                                JPanel().apply {
-                                    layout = BoxLayout(this, BoxLayout.X_AXIS)
-                                    border = JBUI.Borders.empty(16, 16, 8, 16)
-
-                                    val isAuthenticated = sweepSettings.githubToken.isNotBlank()
-                                    val buttonText = if (isAuthenticated) "Switch Accounts" else "Sign in"
-
-                                    add(
-                                        JButton(buttonText).apply {
-                                            withSweepFont(project)
-                                            toolTipText = "Clear the current token and open login page"
-                                            addActionListener {
-                                                // Clear the token
-                                                sweepSettings.githubToken = ""
-                                                githubTokenField.text = ""
-
-                                                // Close the current dialog
-                                                configDialog?.close(0)
-
-                                                // Re-open the login page
-                                                ApplicationManager.getApplication().invokeLater {
-                                                    sweepSettings.initiateGitHubAuth(project)
-                                                }
-                                            }
-                                        },
-                                    )
-
-                                    add(Box.createHorizontalGlue())
-                                },
-                                gbc,
-                            )
-                        }
-
-                        // Add filler to push everything to the top
-                        gbc.gridy = 6
                         gbc.weighty = 1.0
                         gbc.fill = GridBagConstraints.BOTH
                         add(JPanel(), gbc)
@@ -6042,10 +5838,9 @@ class SweepConfig(
                 // Add tabs conditionally based on gateway mode
                 if (sweepSettings.hasBeenSet) {
                     addTab("Features", generalSettingsPanel)
-                    addTab("Account", apiSettingsPanel)
 
                     // Only add Agent, MCP Servers, and Rules tabs if NOT in frontend mode
-                    if (!SweepConstants.IS_FRONTEND_MODE) {
+                    /*if (!SweepConstants.IS_FRONTEND_MODE) {
                         addTab("Agent", toolCallsSettingsPanel)
                         addTab("MCP Servers", mcpServersSettingsPanel)
                         addTab("Rules", rulesPanel)
@@ -6053,7 +5848,7 @@ class SweepConfig(
 
                     addTab("BYOK", byokPanel)
                     addTab("Custom Prompts", customPromptsPanel)
-                    addTab("Advanced", advancedSettingsPanel)
+                    addTab("Advanced", advancedSettingsPanel)*/
 
                     // Select tab based on tabName parameter, default to 0
                     selectedIndex =
@@ -6064,10 +5859,9 @@ class SweepConfig(
                         }
                 } else {
                     addTab("Features", generalSettingsPanel)
-                    addTab("Account", apiSettingsPanel)
 
                     // Only add Agent, MCP Servers, and Rules tabs if NOT in frontend mode
-                    if (!SweepConstants.IS_FRONTEND_MODE) {
+                    /*if (!SweepConstants.IS_FRONTEND_MODE) {
                         addTab("Agent", toolCallsSettingsPanel)
                         addTab("MCP Servers (Beta)", mcpServersSettingsPanel)
                         addTab("Rules", rulesPanel)
@@ -6075,14 +5869,14 @@ class SweepConfig(
 
                     addTab("BYOK", byokPanel)
                     addTab("Custom Prompts", customPromptsPanel)
-                    addTab("Advanced", advancedSettingsPanel)
+                    addTab("Advanced", advancedSettingsPanel)*/
 
                     // Select tab based on tabName parameter, default to API Settings (1)
                     selectedIndex =
                         if (tabName != null) {
-                            (0 until tabCount).firstOrNull { getTitleAt(it) == tabName } ?: 1
+                            (0 until tabCount).firstOrNull { getTitleAt(it) == tabName } ?: 0
                         } else {
-                            1
+                            0
                         }
                 }
             }
@@ -6096,9 +5890,9 @@ class SweepConfig(
                 init {
                     title =
                         when (SweepConstants.GATEWAY_MODE) {
-                            SweepConstants.GatewayMode.CLIENT -> "Sweep Settings (Client)"
-                            SweepConstants.GatewayMode.HOST -> "Sweep Settings (Host)"
-                            else -> "Sweep Settings"
+                            SweepConstants.GatewayMode.CLIENT -> "OxideChat Settings (Client)"
+                            SweepConstants.GatewayMode.HOST -> "OxideChat Settings (Host)"
+                            else -> "OxideChat Settings"
                         }
                     isModal = false
                     init()
@@ -6111,51 +5905,7 @@ class SweepConfig(
                 }
 
                 override fun createLeftSideActions(): Array<Action> {
-                    val actions = mutableListOf<Action>()
-
-                    // Add Questions/Feedback button
-                    actions.add(
-                        object : AbstractAction("Questions/Feedback?") {
-                            init {
-                                putValue(SMALL_ICON, AllIcons.General.ContextHelp)
-                                // Reduce left spacing by setting custom properties
-                                putValue("JButton.buttonType", "borderless")
-                                putValue("ActionButton.showText", true)
-                            }
-
-                            override fun actionPerformed(e: ActionEvent?) {
-                                try {
-                                    BrowserUtil.browse(
-                                        URI(
-                                            // Open feedback page in browser
-                                            "https://app.sweep.dev/feedback",
-                                        ),
-                                    )
-                                } catch (_: Exception) {
-                                    // Silently handle any exceptions
-                                }
-                            }
-                        },
-                    )
-
-                    // Add Manage Account button if authenticated
-                    if (sweepSettings.githubToken.isNotBlank()) {
-                        actions.add(
-                            object : AbstractAction("Manage Account") {
-                                init {
-                                    putValue(SMALL_ICON, AllIcons.General.User)
-                                    putValue("JButton.buttonType", "borderless")
-                                    putValue("ActionButton.showText", true)
-                                }
-
-                                override fun actionPerformed(e: ActionEvent?) {
-                                    BrowserUtil.browse("https://app.sweep.dev", project)
-                                }
-                            },
-                        )
-                    }
-
-                    return actions.toTypedArray()
+                    return emptyArray()
                 }
 
                 override fun doOKAction() {

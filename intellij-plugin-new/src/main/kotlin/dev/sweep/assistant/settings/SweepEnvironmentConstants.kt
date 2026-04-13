@@ -29,9 +29,6 @@ object SweepEnvironmentConstants {
     }
 
     object Defaults {
-        const val DEFAULT_BASE_URL = "https://backend.app.sweep.dev"
-
-        val BILLING_URL =
-            "https://app.sweep.dev/billing"
+        const val DEFAULT_BASE_URL = "http://localhost:11434"
     }
 }

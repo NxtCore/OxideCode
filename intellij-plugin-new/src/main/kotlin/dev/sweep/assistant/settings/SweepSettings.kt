@@ -27,6 +27,8 @@ data class DirectAutocompleteProviderConfig(
     var apiKey: String = "",
     var model: String = "",
     var completionModel: String = "",
+    var nesPromptStyle: String = "sweep",
+    var completionEndpoint: String = "completions",
     var availableModels: List<String> = emptyList(),
 )
 

@@ -15,7 +15,7 @@ import dev.sweep.assistant.utils.isTerminalFocused
  * addSelectionAndRequestFocus() on its per‑instance FocusChatController.
  */
 class FocusChatAction : AnAction() {
-    private val icon = IconLoader.getIcon("/icons/sweep16x16.svg", FocusChatAction::class.java)
+    private val icon = IconLoader.getIcon("/icons/oxidecode16x16.svg", FocusChatAction::class.java)
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return

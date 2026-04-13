@@ -176,12 +176,7 @@ class SweepStartupActivity :
         }
 
         ApplicationManager.getApplication().invokeLater {
-            val savedVisibility = SweepMetaData.getInstance().isToolWindowVisible
-
             val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(SweepConstants.TOOLWINDOW_NAME)
-            if (savedVisibility) {
-                toolWindow?.show()
-            }
             // Listen for tool window visibility changes to persist state
             project.messageBus.connect(SweepProjectService.getInstance(project)).subscribe(
                 ToolWindowManagerListener.TOPIC,
@@ -234,12 +229,7 @@ class SweepStartupActivity :
 
         if (!SweepSettings.getInstance().hasBeenSet) {
             if (SweepSettingsParser.isCloudEnvironment()) {
-                // Cloud: open tool window for login/settings
-                ApplicationManager.getApplication().invokeLater {
-                    if (!project.isDisposed) {
-                        ToolWindowManager.getInstance(project).getToolWindow(SweepConstants.TOOLWINDOW_NAME)?.show()
-                    }
-                }
+                // Cloud: wait for explicit user open/login action
             } else {
                 // Non-cloud: preserve existing behavior
                 SweepAuthServer.start(project)
