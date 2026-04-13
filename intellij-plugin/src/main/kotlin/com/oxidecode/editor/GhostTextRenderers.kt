@@ -127,7 +127,7 @@ internal class InlineGhostTextRenderer(
     private fun tabSize(inlay: Inlay<*>): Int = inlay.editor.settings.getTabSize(inlay.editor.project).coerceAtLeast(1)
 
     private fun hintText(): String {
-        val action = ActionManager.getInstance().getAction("oxidecode.acceptNes")
+        val action = ActionManager.getInstance().getAction("oxidecode.acceptAutocomplete")
         val shortcutText = action?.let(KeymapUtil::getFirstKeyboardShortcutText)
         return shortcutText?.takeIf { it.isNotBlank() } ?: "Tab"
     }

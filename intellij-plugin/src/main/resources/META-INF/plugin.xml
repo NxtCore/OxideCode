@@ -74,5 +74,19 @@
                 text="Dismiss Next Edit Suggestion">
             <keyboard-shortcut keymap="$default" first-keystroke="ESCAPE"/>
         </action>
+        <action id="oxidecode.acceptAutocomplete"
+                class="com.oxidecode.nes.AcceptAutocompleteAction"
+                text="Accept Autocomplete Suggestion"
+                description="Accept the OxideCode autocomplete suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="TAB"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="TAB"/>
+        </action>
+        <action id="oxidecode.dismissAutocomplete"
+                class="com.oxidecode.nes.DismissAutocompleteAction"
+                text="Reject Autocomplete Suggestion"
+                description="Dismiss the OxideCode autocomplete suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="ESCAPE"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="ESCAPE"/>
+        </action>
     </actions>
 </idea-plugin>

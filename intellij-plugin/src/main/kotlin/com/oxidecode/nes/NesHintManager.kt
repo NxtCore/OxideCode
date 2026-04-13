@@ -76,6 +76,7 @@ object NesHintManager {
         when (classification.decision) {
             EditDisplayDecision.SUPPRESS -> dismiss(editor)
             EditDisplayDecision.INLINE -> showInline(editor, preview)
+            EditDisplayDecision.POPUP -> showPopup(editor, preview)
             EditDisplayDecision.JUMP -> showJump(editor, preview, editStartLine)
         }
     }
@@ -125,7 +126,7 @@ object NesHintManager {
         }
     }
 
-    private fun showJump(editor: Editor, preview: NesDisplayPreview, editStartLine: Int) {
+    private fun showPopup(editor: Editor, preview: NesDisplayPreview) {
         val project = editor.project ?: return
         val popupContext = buildPopupContext(editor.document, preview)
         activePopupPreview = NesPopupPreview(
@@ -137,6 +138,11 @@ object NesHintManager {
             globalEditor = editor,
             parentDisposable = Disposer.newDisposable(),
         ).also { it.showNearCaret() }
+    }
+
+    private fun showJump(editor: Editor, preview: NesDisplayPreview, editStartLine: Int) {
+        val project = editor.project ?: return
+        showPopup(editor, preview)
         activeJumpHintManager = JumpHintManager(
             editor = editor,
             project = project,
@@ -152,6 +158,11 @@ object NesHintManager {
         val caretOffset = editor.caretModel.offset
         val jumpStart = preview.jumpOffset
         val jumpEnd = maxOf(preview.highlightEndOffset, jumpStart)
+
+        if (activeJumpHintManager == null && activePopupPreview != null) {
+            accept(editor)
+            return
+        }
 
         if (caretOffset !in jumpStart..jumpEnd) {
             val hint = activeHint ?: return

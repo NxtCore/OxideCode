@@ -42,3 +42,35 @@ class DismissNesAction : AnAction() {
             InlineCompletionManager.isShowing(editor) || NesHintManager.isShowing(editor)
     }
 }
+
+class AcceptAutocompleteAction : AnAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        val editor = e.project?.let {
+            FileEditorManager.getInstance(it).selectedTextEditor
+        } ?: return
+        InlineCompletionManager.accept(editor)
+    }
+
+    override fun update(e: AnActionEvent) {
+        val editor = e.project?.let {
+            FileEditorManager.getInstance(it).selectedTextEditor
+        }
+        e.presentation.isEnabled = InlineCompletionManager.isShowing(editor)
+    }
+}
+
+class DismissAutocompleteAction : AnAction() {
+    override fun actionPerformed(e: AnActionEvent) {
+        val editor = e.project?.let {
+            FileEditorManager.getInstance(it).selectedTextEditor
+        } ?: return
+        InlineCompletionManager.dismiss(editor)
+    }
+
+    override fun update(e: AnActionEvent) {
+        val editor = e.project?.let {
+            FileEditorManager.getInstance(it).selectedTextEditor
+        }
+        e.presentation.isEnabled = InlineCompletionManager.isShowing(editor)
+    }
+}

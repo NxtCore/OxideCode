@@ -5,14 +5,14 @@ package com.oxidecode.nes
  *
  * Port of the VS Code extension's `edit-display-classifier.ts`.
  * Determines whether an edit should be shown as inline ghost text (INLINE),
- * a jump-mode decoration at the target lines (JUMP), or suppressed entirely
- * (SUPPRESS).
+ * a popup preview near the caret (POPUP), a jump-mode decoration at the target
+ * lines (JUMP), or suppressed entirely (SUPPRESS).
  */
 
 /** Number of padding rows around the edit range within which ghost text is shown. */
 const val EDIT_RANGE_PADDING_ROWS = 2
 
-enum class EditDisplayDecision { INLINE, JUMP, SUPPRESS }
+enum class EditDisplayDecision { INLINE, POPUP, JUMP, SUPPRESS }
 
 data class EditDisplayClassification(
     val decision: EditDisplayDecision,
@@ -34,6 +34,7 @@ data class EditDisplayClassifierInput(
  *
  * Logic mirrors VS Code's `classifyEditDisplay()`:
  *   - Edit range more than [EDIT_RANGE_PADDING_ROWS] rows from cursor → JUMP
+ *   - Nearby multiline edit before the cursor → POPUP
  *   - Edit is before the cursor → JUMP
  *   - Multi-line completion at cursor on a single-newline boundary → SUPPRESS
  *   - Otherwise → INLINE
@@ -51,7 +52,11 @@ fun classifyEditDisplay(input: EditDisplayClassifierInput): EditDisplayClassific
     }
 
     if (isBeforeCursor && hasMultilineCompletion) {
-        return EditDisplayClassification(EditDisplayDecision.JUMP, "before-cursor-multiline")
+        return if (kotlin.math.abs(input.cursorLine - input.editStartLine) <= 1) {
+            EditDisplayClassification(EditDisplayDecision.POPUP, "before-cursor-multiline-nearby")
+        } else {
+            EditDisplayClassification(EditDisplayDecision.JUMP, "before-cursor-multiline")
+        }
     }
 
     if (isBeforeCursor) {
