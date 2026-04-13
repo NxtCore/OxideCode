@@ -36,6 +36,24 @@ class RustCoreBridge {
         requestId: String,
     ): String
 
+    external fun predictNextEdit(
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        completionModel: String,
+        nesPromptStyle: String,
+        deltasJson: String,
+        cursorFilepath: String,
+        cursorLine: Int,
+        cursorCol: Int,
+        fileContent: String,
+        language: String,
+        completionEndpoint: String,
+        originalFileContent: String,
+        calibrationLogDir: String,
+        requestId: String,
+    ): String
+
     external fun fetchNextEditAutocomplete(
         baseUrl: String,
         authorization: String,

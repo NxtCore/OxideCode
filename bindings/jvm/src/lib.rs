@@ -381,6 +381,47 @@ pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_getCompl
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_predictNextEdit(
+    env: JNIEnv,
+    class: JClass,
+    base_url: JString,
+    api_key: JString,
+    model: JString,
+    completion_model: JString,
+    nes_prompt_style: JString,
+    deltas_json: JString,
+    cursor_filepath: JString,
+    cursor_line: jint,
+    cursor_col: jint,
+    file_content: JString,
+    language: JString,
+    completion_endpoint: JString,
+    original_file_content: JString,
+    calibration_log_dir: JString,
+    request_id: JString,
+) -> jstring {
+    Java_com_oxidecode_CoreBridge_predictNextEdit(
+        env,
+        class,
+        base_url,
+        api_key,
+        model,
+        completion_model,
+        nes_prompt_style,
+        deltas_json,
+        cursor_filepath,
+        cursor_line,
+        cursor_col,
+        file_content,
+        language,
+        completion_endpoint,
+        original_file_content,
+        calibration_log_dir,
+        request_id,
+    )
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_fetchNextEditAutocomplete(
     mut env: JNIEnv,
     _class: JClass,
@@ -411,9 +452,8 @@ pub extern "system" fn Java_dev_sweep_assistant_services_RustCoreBridge_fetchNex
 
     let cancel = CancellationToken::new();
     let _request_guard = RequestGuard::new(request_id, cancel.clone());
-    let url = format!("{}/backend/next_edit_autocomplete", base_url.trim_end_matches('/'));
-    let url_for_log = url.clone();
-    let request_url = url.clone();
+    let request_url = format!("{}/backend/next_edit_autocomplete", base_url.trim_end_matches('/'));
+    let url_for_log = request_url.clone();
 
     let result = runtime().block_on(async move {
         let _ = serde_json::from_str::<serde_json::Value>(&request_json)?;

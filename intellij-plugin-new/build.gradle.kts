@@ -10,7 +10,7 @@ plugins {
     kotlin("jvm") version "2.1.0"
     id("com.google.protobuf") version "0.9.4"
     kotlin("plugin.serialization") version "1.9.20"
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("com.gradleup.shadow") version "9.4.1"
 }
 
 val remoteRobotVersion = "0.11.20"

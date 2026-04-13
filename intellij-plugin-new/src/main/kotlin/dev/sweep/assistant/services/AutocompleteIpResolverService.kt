@@ -4,6 +4,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PermanentInstallationID
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -13,6 +14,7 @@ import com.intellij.psi.PsiDocumentManager
 import dev.sweep.assistant.autocomplete.edit.NextEditAutocompleteRequest
 import dev.sweep.assistant.autocomplete.edit.NextEditAutocompletion
 import dev.sweep.assistant.autocomplete.edit.NextEditAutocompleteResponse
+import dev.sweep.assistant.autocomplete.edit.RecentEditsTracker
 import dev.sweep.assistant.settings.SweepSettings
 import dev.sweep.assistant.settings.SweepSettingsParser
 import dev.sweep.assistant.utils.CompressionUtils
@@ -21,6 +23,8 @@ import dev.sweep.assistant.utils.getCurrentSweepPluginVersion
 import dev.sweep.assistant.utils.getDebugInfo
 import dev.sweep.assistant.utils.defaultJson
 import kotlinx.coroutines.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import java.net.InetAddress
 import java.net.URI
 import java.net.http.HttpClient
@@ -37,6 +41,40 @@ import java.util.concurrent.atomic.AtomicLong
 class AutocompleteIpResolverService(
     private val project: Project,
 ) : Disposable {
+    @Serializable
+    private data class LegacyEditDelta(
+        val filepath: String,
+        val startLine: Int,
+        val startCol: Int,
+        val startOffset: Int,
+        val removed: String,
+        val inserted: String,
+        val fileContent: String,
+        val timestampMs: Long,
+    )
+
+    @Serializable
+    private data class LegacyHintPosition(
+        val filepath: String,
+        val line: Int,
+        val col: Int,
+    )
+
+    @Serializable
+    private data class LegacyHintSelectionRange(
+        val start_line: Int,
+        val start_col: Int,
+        val end_line: Int,
+        val end_col: Int,
+    )
+
+    @Serializable
+    private data class LegacyNesHint(
+        val position: LegacyHintPosition,
+        val replacement: String,
+        val selection_to_remove: LegacyHintSelectionRange? = null,
+    )
+
     companion object {
         private val logger = Logger.getInstance(AutocompleteIpResolverService::class.java)
 
@@ -98,63 +136,169 @@ class AutocompleteIpResolverService(
         fallbackPath: String,
     ): String {
         if (virtualFile != null) {
-            val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(
-                com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(virtualFile) ?: return virtualFile.fileType.name,
-            )
-            val languageId = psiFile?.language?.id?.takeIf { it.isNotBlank() }
-            if (languageId != null) {
-                return languageId.lowercase()
+            return ReadAction.compute<String, Throwable> {
+                val document = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(virtualFile)
+                val psiFile = document?.let { PsiDocumentManager.getInstance(project).getPsiFile(it) }
+                val languageId = psiFile?.language?.id?.takeIf { it.isNotBlank() }
+                languageId?.lowercase() ?: virtualFile.fileType.name.lowercase()
             }
-            return virtualFile.fileType.name.lowercase()
         }
 
         return fallbackPath.substringAfterLast('.', "text").lowercase()
     }
 
+    private fun computeLineAndColumn(text: String, offset: Int): Pair<Int, Int> {
+        val safeOffset = offset.coerceIn(0, text.length)
+        var line = 0
+        var lastLineStart = 0
+        for (index in 0 until safeOffset) {
+            if (text[index] == '\n') {
+                line += 1
+                lastLineStart = index + 1
+            }
+        }
+        return line to (safeOffset - lastLineStart)
+    }
+
+    private fun offsetFromLineAndColumn(
+        text: String,
+        line: Int,
+        col: Int,
+    ): Int {
+        val safeLine = line.coerceAtLeast(0)
+        var currentLine = 0
+        var lineStart = 0
+        var index = 0
+        while (index < text.length && currentLine < safeLine) {
+            if (text[index] == '\n') {
+                currentLine += 1
+                lineStart = index + 1
+            }
+            index += 1
+        }
+        val lineEnd = text.indexOf('\n', lineStart).let { if (it == -1) text.length else it }
+        return (lineStart + col.coerceAtLeast(0)).coerceIn(lineStart, lineEnd)
+    }
+
+    private fun buildLegacyDelta(record: dev.sweep.assistant.autocomplete.edit.EditRecord): LegacyEditDelta? {
+        val original = record.originalText
+        val updated = record.newText
+        var prefixLen = 0
+        val maxPrefix = minOf(original.length, updated.length)
+        while (prefixLen < maxPrefix && original[prefixLen] == updated[prefixLen]) {
+            prefixLen += 1
+        }
+
+        var suffixLen = 0
+        val originalRemainder = original.length - prefixLen
+        val updatedRemainder = updated.length - prefixLen
+        while (
+            suffixLen < originalRemainder &&
+            suffixLen < updatedRemainder &&
+            original[original.length - 1 - suffixLen] == updated[updated.length - 1 - suffixLen]
+        ) {
+            suffixLen += 1
+        }
+
+        val removedEnd = original.length - suffixLen
+        val insertedEnd = updated.length - suffixLen
+        val removed = original.substring(prefixLen, removedEnd)
+        val inserted = updated.substring(prefixLen, insertedEnd)
+        if (removed.isEmpty() && inserted.isEmpty()) {
+            return null
+        }
+
+        val (startLine, startCol) = computeLineAndColumn(original, prefixLen)
+        return LegacyEditDelta(
+            filepath = record.filePath,
+            startLine = startLine,
+            startCol = startCol,
+            startOffset = prefixLen,
+            removed = removed,
+            inserted = inserted,
+            fileContent = updated,
+            timestampMs = record.timestamp,
+        )
+    }
+
+    private fun buildLegacyDeltas(): String {
+        val deltas =
+            RecentEditsTracker
+                .getInstance(project)
+                .getRecentEditRecords(highResolution = true)
+                .mapNotNull(::buildLegacyDelta)
+
+        return defaultJson.encodeToString(ListSerializer(LegacyEditDelta.serializer()), deltas)
+    }
+
+    private fun legacyHintToResponse(
+        request: NextEditAutocompleteRequest,
+        hint: LegacyNesHint,
+        elapsed: Long,
+    ): NextEditAutocompleteResponse {
+        val hintOffset = offsetFromLineAndColumn(request.file_contents, hint.position.line, hint.position.col)
+        val startIndex =
+            hint.selection_to_remove?.let { selection ->
+                offsetFromLineAndColumn(request.file_contents, selection.start_line, selection.start_col)
+            } ?: hintOffset
+        val endIndex =
+            hint.selection_to_remove?.let { selection ->
+                offsetFromLineAndColumn(request.file_contents, selection.end_line, selection.end_col)
+            } ?: startIndex
+
+        val autocompleteId = "direct-${System.currentTimeMillis()}"
+        val completion =
+            NextEditAutocompletion(
+                start_index = startIndex,
+                end_index = endIndex,
+                completion = hint.replacement,
+                confidence = 1.0f,
+                autocomplete_id = autocompleteId,
+            )
+
+        return NextEditAutocompleteResponse(
+            start_index = startIndex,
+            end_index = endIndex,
+            completion = hint.replacement,
+            confidence = 1.0f,
+            autocomplete_id = autocompleteId,
+            elapsed_time_ms = elapsed,
+            completions = listOf(completion),
+        )
+    }
+
     private suspend fun fetchDirectProviderAutocomplete(request: NextEditAutocompleteRequest): NextEditAutocompleteResponse? {
         val provider = SweepSettings.getInstance().directAutocompleteProvider
-        val cursor = request.cursor_position.coerceIn(0, request.file_contents.length)
-        val prefix = request.file_contents.substring(0, cursor)
-        val suffix = request.file_contents.substring(cursor)
         val filePath = request.file_path
+        val cursor = request.cursor_position.coerceIn(0, request.file_contents.length)
+        val (cursorLine, cursorCol) = computeLineAndColumn(request.file_contents, cursor)
+        val deltasJson = buildLegacyDeltas()
 
         val startedAt = System.currentTimeMillis()
-        val completion =
+        val hintJson =
             withContext(Dispatchers.IO) {
-                rustCoreBridge.getCompletion(
+                rustCoreBridge.predictNextEdit(
                     baseUrl = provider.baseUrl.trim().trimEnd('/'),
                     apiKey = provider.apiKey.trim(),
                     model = provider.model.trim(),
                     completionModel = provider.completionModel.trim(),
-                    prefix = prefix,
-                    suffix = suffix,
+                    nesPromptStyle = "sweep",
+                    deltasJson = deltasJson,
+                    cursorFilepath = filePath,
+                    cursorLine = cursorLine,
+                    cursorCol = cursorCol,
+                    fileContent = request.file_contents,
                     language = detectLanguage(filePath),
-                    filepath = filePath,
                     completionEndpoint = "chat_completions",
-                    promptStyle = "sweep",
-                    requestId = rustCoreBridge.newRequestId("ij-direct-autocomplete"),
+                    originalFileContent = request.original_file_contents,
+                    calibrationLogDir = "",
+                    requestId = rustCoreBridge.newRequestId("ij-direct-next-edit"),
                 )
             }.takeIf { it.isNotBlank() } ?: return null
 
         val elapsed = System.currentTimeMillis() - startedAt
-        return NextEditAutocompleteResponse(
-            start_index = cursor,
-            end_index = cursor,
-            completion = completion,
-            confidence = 1.0f,
-            autocomplete_id = "direct-${System.currentTimeMillis()}",
-            elapsed_time_ms = elapsed,
-            completions =
-                listOf(
-                    NextEditAutocompletion(
-                        start_index = cursor,
-                        end_index = cursor,
-                        completion = completion,
-                        confidence = 1.0f,
-                        autocomplete_id = "direct-${System.currentTimeMillis()}",
-                    ),
-                ),
-        )
+        val hint = runCatching { defaultJson.decodeFromString(LegacyNesHint.serializer(), hintJson) }.getOrNull() ?: return null
+        return legacyHintToResponse(request, hint, elapsed)
     }
 
     /**

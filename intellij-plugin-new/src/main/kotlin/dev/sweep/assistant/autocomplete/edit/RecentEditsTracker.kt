@@ -385,6 +385,13 @@ class RecentEditsTracker(
     private var lastDocumentText: String? = null
     private var originalDocumentText: String = ""
 
+    fun getRecentEditRecords(highResolution: Boolean = true): List<EditRecord> =
+        if (highResolution) {
+            recentEditsHighRes.toList()
+        } else {
+            recentEdits.toList()
+        }
+
     // Track diagnostics with their first-seen timestamp
     // Scoped per-project (persists across file switches), with a max size limit
     private data class TrackedDiagnosticKey(
