@@ -270,32 +270,260 @@ fn byte_offset_for_line_col(text: &str, line: u32, col: u32) -> usize {
     offset.min(text.len())
 }
 
-fn touched_line_span(text: &str, start: usize, end: usize) -> (usize, usize, String) {
-    let ranges = line_ranges(text);
-    if ranges.is_empty() {
-        return (0, 0, String::new());
+fn build_unified_diff_like_original(original_text: &str, new_text: &str) -> String {
+    let original_lines: Vec<&str> = original_text.lines().collect();
+    let new_lines: Vec<&str> = new_text.lines().collect();
+    let shared_prefix = original_lines
+        .iter()
+        .zip(new_lines.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+
+    let mut original_suffix = original_lines.len();
+    let mut new_suffix = new_lines.len();
+    while original_suffix > shared_prefix
+        && new_suffix > shared_prefix
+        && original_lines[original_suffix - 1] == new_lines[new_suffix - 1]
+    {
+        original_suffix -= 1;
+        new_suffix -= 1;
     }
 
-    let clamped_start = start.min(text.len());
-    let clamped_end = end.min(text.len());
-    let anchor = if clamped_end > clamped_start {
-        clamped_end - 1
+    let start_context = shared_prefix.saturating_sub(2);
+    let original_context_end = (original_suffix + 2).min(original_lines.len());
+    let new_context_end = (new_suffix + 2).min(new_lines.len());
+
+    let original_span = original_context_end.saturating_sub(start_context);
+    let new_span = new_context_end.saturating_sub(start_context);
+    let header = format!(
+        "@@ -{},{} +{},{} @@",
+        start_context + 1,
+        original_span,
+        start_context + 1,
+        new_span
+    );
+
+    let mut body = Vec::new();
+    for line in &original_lines[start_context..shared_prefix] {
+        body.push(format!(" {line}"));
+    }
+    for line in &original_lines[shared_prefix..original_suffix] {
+        body.push(format!("-{line}"));
+    }
+    for line in &new_lines[shared_prefix..new_suffix] {
+        body.push(format!("+{line}"));
+    }
+    for line in &original_lines[original_suffix..original_context_end] {
+        body.push(format!(" {line}"));
+    }
+
+    if body.iter().all(|line| line.starts_with(' ')) {
+        String::new()
+    } else if body.is_empty() {
+        header
     } else {
-        clamped_start
-    };
+        format!("{header}\n{}", body.join("\n"))
+    }
+}
 
-    let start_line = ranges
-        .iter()
-        .position(|range| clamped_start <= range.end)
-        .unwrap_or(ranges.len().saturating_sub(1));
-    let end_line_inclusive = ranges
-        .iter()
-        .position(|range| anchor < range.end)
-        .unwrap_or(ranges.len().saturating_sub(1));
-    let end_line_exclusive = end_line_inclusive + 1;
-    let byte_range = line_span_to_byte_range(&ranges, text.len(), start_line, end_line_exclusive);
+fn extract_diff_parts_like_original(hunk: &str, num_context_lines: isize) -> (String, String) {
+    let lines: Vec<&str> = hunk.split_inclusive('\n').collect();
+    let content_lines: Vec<&str> = lines
+        .into_iter()
+        .filter(|line| !line.starts_with("@@"))
+        .collect();
 
-    (start_line, end_line_exclusive, text[byte_range].to_string())
+    if num_context_lines == -1 {
+        let mut old_code = String::new();
+        let mut new_code = String::new();
+        for line in &content_lines {
+            if let Some(rest) = line.strip_prefix('-') {
+                old_code.push_str(rest);
+            } else if let Some(rest) = line.strip_prefix('+') {
+                new_code.push_str(rest);
+            } else if let Some(rest) = line.strip_prefix(' ') {
+                old_code.push_str(rest);
+                new_code.push_str(rest);
+            }
+        }
+        return (old_code, new_code);
+    }
+
+    let changed_indices: Vec<usize> = content_lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            if line.starts_with('-') || line.starts_with('+') {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if changed_indices.is_empty() {
+        return (String::new(), String::new());
+    }
+
+    let start_change = *changed_indices.first().unwrap();
+    let end_change = *changed_indices.last().unwrap();
+    let context = num_context_lines.max(0) as usize;
+    let start_idx = start_change.saturating_sub(context);
+    let end_idx = (end_change + context + 1).min(content_lines.len());
+
+    let mut old_code = String::new();
+    let mut new_code = String::new();
+    for line in &content_lines[start_idx..end_idx] {
+        if let Some(rest) = line.strip_prefix('-') {
+            old_code.push_str(rest);
+        } else if let Some(rest) = line.strip_prefix('+') {
+            new_code.push_str(rest);
+        } else if let Some(rest) = line.strip_prefix(' ') {
+            old_code.push_str(rest);
+            new_code.push_str(rest);
+        }
+    }
+
+    (old_code, new_code)
+}
+
+fn parse_hunk_like_original(hunk: &str) -> Option<(u32, Vec<String>, u32, Vec<String>)> {
+    let lines: Vec<&str> = hunk.split_inclusive('\n').collect();
+    let hunk_header = *lines.first()?;
+    let diff_lines = if lines.len() > 2 { &lines[2..] } else { &[][..] };
+    let parts: Vec<&str> = hunk_header.split_whitespace().collect();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let input_start = parts[1]
+        .trim_start_matches('-')
+        .split(',')
+        .next()?
+        .parse::<u32>()
+        .ok()?;
+    let output_start = parts[2]
+        .trim_start_matches('+')
+        .split(',')
+        .next()?
+        .parse::<u32>()
+        .ok()?;
+
+    let mut input_lines = Vec::new();
+    let mut output_lines = Vec::new();
+    for line in diff_lines {
+        if let Some(rest) = line.strip_prefix('-') {
+            input_lines.push(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix('+') {
+            output_lines.push(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix(' ') {
+            input_lines.push(rest.to_string());
+            output_lines.push(rest.to_string());
+        }
+    }
+
+    Some((input_start, input_lines, output_start, output_lines))
+}
+
+fn split_formatted_diff_hunks(diff: &str) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    let mut current_file = String::new();
+    let mut current_hunk = String::new();
+
+    for line in diff.split_inclusive('\n') {
+        if let Some(path) = line.strip_prefix("File: ") {
+            if !current_file.is_empty() && !current_hunk.is_empty() {
+                result.push((current_file.clone(), current_hunk.clone()));
+                current_hunk.clear();
+            }
+            current_file = path.trim_end_matches('\n').to_string();
+            continue;
+        }
+
+        if line.starts_with("@@") {
+            if !current_file.is_empty() && !current_hunk.is_empty() {
+                result.push((current_file.clone(), current_hunk.clone()));
+                current_hunk.clear();
+            }
+            current_hunk.push_str(line);
+            continue;
+        }
+
+        if !current_hunk.is_empty() {
+            current_hunk.push_str(line);
+        }
+    }
+
+    if !current_file.is_empty() && !current_hunk.is_empty() {
+        result.push((current_file, current_hunk));
+    }
+
+    result
+}
+
+fn recent_changes_from_formatted_diff(diff: &str) -> Vec<RecentChange> {
+    split_formatted_diff_hunks(diff)
+        .into_iter()
+        .filter_map(|(file_path, hunk)| {
+            let (old_code_with_context, new_code_with_context) =
+                extract_diff_parts_like_original(&hunk, 1);
+            let (old_code_minimal, new_code_minimal) =
+                extract_diff_parts_like_original(&hunk, 0);
+            let (_, _, output_start, output_lines) = parse_hunk_like_original(&hunk)?;
+            let output_line_count = output_lines.len().max(1) as u32;
+            Some(RecentChange {
+                file_path,
+                start_line: output_start,
+                end_line: output_start + output_line_count.saturating_sub(1),
+                old_code: old_code_with_context,
+                new_code: new_code_with_context,
+                old_code_minimal,
+                new_code_minimal,
+                timestamp_ms: 0,
+            })
+        })
+        .collect()
+}
+
+fn recent_change_from_contents(
+    file_path: &str,
+    before_content: &str,
+    after_content: &str,
+    timestamp_ms: u64,
+) -> Option<RecentChange> {
+    let diff = build_unified_diff_like_original(before_content, after_content);
+    if diff.trim().is_empty() {
+        return None;
+    }
+
+    let header = diff.lines().next()?;
+    let parts: Vec<&str> = header.split_whitespace().collect();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let output_start = parts[2]
+        .trim_start_matches('+')
+        .split(',')
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())?;
+
+    let (old_code_with_context, new_code_with_context) =
+        extract_diff_parts_like_original(&diff, 1);
+    let (old_code_minimal, new_code_minimal) = extract_diff_parts_like_original(&diff, 0);
+
+    let output_line_count = new_code_with_context.lines().count().max(1) as u32;
+
+    Some(RecentChange {
+        file_path: file_path.to_string(),
+        start_line: output_start,
+        end_line: output_start + output_line_count.saturating_sub(1),
+        old_code: old_code_with_context,
+        new_code: new_code_with_context,
+        old_code_minimal,
+        new_code_minimal,
+        timestamp_ms,
+    })
 }
 
 fn offset_to_line_col(text: &str, offset: usize) -> (u32, u32) {
@@ -570,6 +798,12 @@ impl NesEngine {
         file_content: &str,
         language: &str,
         original_file_content: Option<&str>,
+        history_prompt: Option<&str>,
+        file_chunks: Option<&[FileChunk]>,
+        retrieval_chunks: Option<&[FileChunk]>,
+        high_res_history_prompt: Option<&str>,
+        high_res_edits: Option<&[EditDelta]>,
+        changes_above_cursor: bool,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
         let recent_edits: Vec<EditDelta> = {
@@ -632,11 +866,17 @@ impl NesEngine {
                 let orig = original_file_content.unwrap_or(file_content);
                 self.predict_sweep(
                     &recent_edits,
+                    high_res_edits.unwrap_or(&recent_edits),
                     cursor_filepath,
                     cursor_line,
                     cursor_col,
                     file_content,
                     orig,
+                    history_prompt,
+                    file_chunks,
+                    retrieval_chunks,
+                    high_res_history_prompt,
+                    changes_above_cursor,
                     cancel,
                 )
                 .await
@@ -819,144 +1059,72 @@ impl NesEngine {
     async fn predict_sweep(
         &self,
         recent_edits: &[EditDelta],
+        high_res_edits: &[EditDelta],
         cursor_filepath: &str,
         cursor_line: u32,
         cursor_col: u32,
         file_content: &str,
         original_file_content: &str,
+        history_prompt: Option<&str>,
+        file_chunks: Option<&[FileChunk]>,
+        retrieval_chunks: Option<&[FileChunk]>,
+        high_res_history_prompt: Option<&str>,
+        changes_above_cursor: bool,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
-        let mut recent_changes: Vec<RecentChange> = recent_edits
-            .iter()
-            .rev()
-            .filter_map(|edit| {
-                if edit.filepath != cursor_filepath {
-                    return None;
-                }
+        let history_from_prompt = history_prompt.is_some();
+        let mut recent_changes: Vec<RecentChange> = if let Some(history_prompt) = history_prompt {
+            recent_changes_from_formatted_diff(history_prompt)
+        } else {
+            recent_edits
+                .iter()
+                .rev()
+                .filter_map(|edit| {
+                    let text = &edit.file_content;
+                    let start_offset = edit
+                        .start_offset
+                        .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
 
-                let text = &edit.file_content;
-                let start_offset = edit
-                    .start_offset
-                    .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
+                    let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
+                    let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
 
-                let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
-                let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
+                    let before_end_calc = (start_offset + edit.removed.len()).min(text.len());
+                    let is_before_state = text.get(start_offset..before_end_calc) == Some(edit.removed.as_str());
 
-                let before_end_calc = (start_offset + edit.removed.len()).min(text.len());
-                let is_before_state = text.get(start_offset..before_end_calc) == Some(edit.removed.as_str());
+                    let (before_content, after_content) = if is_after_state {
+                        let before = format!(
+                            "{}{}{}",
+                            &text[..start_offset],
+                            edit.removed,
+                            &text[after_end_calc..],
+                        );
+                        (before, text.clone())
+                    } else if is_before_state {
+                        let after = format!(
+                            "{}{}{}",
+                            &text[..start_offset],
+                            edit.inserted,
+                            &text[before_end_calc..],
+                        );
+                        (text.clone(), after)
+                    } else {
+                        return None;
+                    };
 
-                let (before_content, after_content) = if is_after_state {
-                    let before = format!(
-                        "{}{}{}",
-                        &text[..start_offset],
-                        edit.removed,
-                        &text[after_end_calc..],
-                    );
-                    (before, text.clone())
-                } else if is_before_state {
-                    let after = format!(
-                        "{}{}{}",
-                        &text[..start_offset],
-                        edit.inserted,
-                        &text[before_end_calc..],
-                    );
-                    (text.clone(), after)
-                } else {
-                    return None;
-                };
-
-                let actual_after_end = start_offset + edit.inserted.len();
-                let actual_before_end = start_offset + edit.removed.len();
-
-                let (after_start_line, after_end_line, new_code) =
-                    touched_line_span(&after_content, start_offset, actual_after_end);
-                let (_, _, old_code) = touched_line_span(&before_content, start_offset, actual_before_end);
-
-                let start_line_1 = after_start_line as u32 + 1;
-                let end_line_1 = after_end_line as u32 + 1;
-
-                Some(RecentChange {
-                    file_path: edit.filepath.clone(),
-                    start_line: start_line_1,
-                    end_line: end_line_1,
-                    old_code,
-                    new_code,
-                    timestamp_ms: edit.timestamp_ms,
+                    recent_change_from_contents(
+                        &edit.filepath,
+                        &before_content,
+                        &after_content,
+                        edit.timestamp_ms,
+                    )
                 })
-            })
-            .take(sweep::MAX_RECENT_CHANGES)
-            .collect();
+                .take(sweep::MAX_RECENT_CHANGES)
+                .collect()
+        };
 
-        recent_changes.reverse();
-
-        let mut cross_file_recent_changes: Vec<RecentChange> = recent_edits
-            .iter()
-            .rev()
-            .filter(|edit| edit.filepath != cursor_filepath)
-            .filter_map(|edit| {
-                let text = &edit.file_content;
-                let start_offset = edit
-                    .start_offset
-                    .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
-
-                let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
-                let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
-
-                let before_end_calc = (start_offset + edit.removed.len()).min(text.len());
-                let is_before_state = text.get(start_offset..before_end_calc) == Some(edit.removed.as_str());
-
-                let (before_content, after_content) = if is_after_state {
-                    let before = format!(
-                        "{}{}{}",
-                        &text[..start_offset],
-                        edit.removed,
-                        &text[after_end_calc..],
-                    );
-                    (before, text.clone())
-                } else if is_before_state {
-                    let after = format!(
-                        "{}{}{}",
-                        &text[..start_offset],
-                        edit.inserted,
-                        &text[before_end_calc..],
-                    );
-                    (text.clone(), after)
-                } else {
-                    return None;
-                };
-
-                let actual_after_end = start_offset + edit.inserted.len();
-                let actual_before_end = start_offset + edit.removed.len();
-
-                let (after_start_line, after_end_line, new_code) =
-                    touched_line_span(&after_content, start_offset, actual_after_end);
-                let (_, _, old_code) = touched_line_span(&before_content, start_offset, actual_before_end);
-
-                Some(RecentChange {
-                    file_path: edit.filepath.clone(),
-                    start_line: after_start_line as u32 + 1,
-                    end_line: after_end_line as u32 + 1,
-                    old_code,
-                    new_code,
-                    timestamp_ms: edit.timestamp_ms,
-                })
-            })
-            .take(sweep::MAX_RECENT_CHANGES)
-            .collect();
-
-        cross_file_recent_changes.reverse();
-
-        let mut seen_cross_file_paths = std::collections::HashSet::new();
-        let cross_file_chunks: Vec<FileChunk> = recent_edits
-            .iter()
-            .rev()
-            .filter(|edit| edit.filepath != cursor_filepath)
-            .filter(|edit| seen_cross_file_paths.insert(edit.filepath.clone()))
-            .map(|edit| FileChunk {
-                file_path: edit.filepath.clone(),
-                content: edit.file_content.clone(),
-            })
-            .collect();
+        if !history_from_prompt {
+            recent_changes.reverse();
+        }
 
         // ── 2. Compute cursor byte offset from (line, col) ──────────────
         let cursor_position = {
@@ -973,15 +1141,71 @@ impl NesEngine {
         };
 
         // ── 3. Call the new build_sweep_prompt ────────────────────────────
+        let high_res_from_prompt = high_res_history_prompt.is_some();
+        let mut high_res_recent_changes: Vec<RecentChange> =
+            if let Some(high_res_history_prompt) = high_res_history_prompt {
+                recent_changes_from_formatted_diff(high_res_history_prompt)
+            } else {
+                high_res_edits
+                    .iter()
+                    .rev()
+                    .filter_map(|edit| {
+                        let text = &edit.file_content;
+                        let start_offset = edit
+                            .start_offset
+                            .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
+
+                        let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
+                        let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
+
+                        let before_end_calc = (start_offset + edit.removed.len()).min(text.len());
+                        let is_before_state = text.get(start_offset..before_end_calc) == Some(edit.removed.as_str());
+
+                        let (before_content, after_content) = if is_after_state {
+                            let before = format!(
+                                "{}{}{}",
+                                &text[..start_offset],
+                                edit.removed,
+                                &text[after_end_calc..],
+                            );
+                            (before, text.clone())
+                        } else if is_before_state {
+                            let after = format!(
+                                "{}{}{}",
+                                &text[..start_offset],
+                                edit.inserted,
+                                &text[before_end_calc..],
+                            );
+                            (text.clone(), after)
+                        } else {
+                            return None;
+                        };
+
+                        recent_change_from_contents(
+                            &edit.filepath,
+                            &before_content,
+                            &after_content,
+                            edit.timestamp_ms,
+                        )
+                    })
+                    .take(sweep::MAX_RECENT_CHANGES)
+                    .collect()
+            };
+
+        if !high_res_from_prompt {
+            high_res_recent_changes.reverse();
+        }
+
         let (prompt, ctx) = build_sweep_prompt(
             cursor_filepath,
             file_content,
+            original_file_content,
             cursor_position,
             &recent_changes,
-            Some(&cross_file_recent_changes),
-            None,  // retrieval_chunks
-            Some(&cross_file_chunks),
-            false, // changes_above_cursor
+            Some(&high_res_recent_changes),
+            retrieval_chunks,
+            file_chunks,
+            changes_above_cursor,
             None,  // num_lines_before
             None,  // num_lines_after
         );

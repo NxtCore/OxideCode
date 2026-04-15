@@ -10,8 +10,8 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.oxidecode.CoreBridge
-import com.oxidecode.absoluteUnixPath
 import com.oxidecode.detectLanguageId
+import com.oxidecode.projectRelativeUnixPath
 import com.oxidecode.settings.OxideCodeSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -84,7 +84,7 @@ private class InlineCompletionDocumentListener(
         if (isDocumentTooLarge(document)) return
 
         val offset = editor.caretModel.offset.coerceIn(0, document.textLength)
-        val filepath = absoluteUnixPath(document) ?: return
+        val filepath = projectRelativeUnixPath(project, document) ?: return
         if (settings.shouldExcludeFromAutocomplete(filepath)) return
 
         val text = document.text

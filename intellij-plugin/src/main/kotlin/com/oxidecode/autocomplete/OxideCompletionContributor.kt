@@ -4,8 +4,8 @@ import com.intellij.codeInsight.completion.*
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.openapi.components.service
 import com.oxidecode.CoreBridge
-import com.oxidecode.absoluteUnixPath
 import com.oxidecode.detectLanguageId
+import com.oxidecode.projectRelativeUnixPath
 import com.oxidecode.settings.OxideCodeSettings
 
 /**
@@ -32,7 +32,7 @@ class OxideCompletionContributor : CompletionContributor() {
         val offset = parameters.offset
         val project = parameters.originalFile.project
 
-        val filepath = absoluteUnixPath(document) ?: return
+        val filepath = projectRelativeUnixPath(project, document) ?: return
         if (settings.shouldExcludeFromAutocomplete(filepath)) return
 
         val text = document.text

@@ -4,6 +4,7 @@ import com.intellij.codeInsight.template.TemplateManager
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorKind
 import com.intellij.openapi.editor.event.CaretEvent
 import com.intellij.openapi.editor.event.CaretListener
 import com.intellij.openapi.editor.event.DocumentEvent
@@ -14,10 +15,10 @@ import com.intellij.openapi.editor.event.SelectionEvent
 import com.intellij.openapi.editor.event.SelectionListener
 import com.intellij.openapi.diagnostic.Logger
 import com.oxidecode.CoreBridge
-import com.oxidecode.absoluteUnixPath
 import com.oxidecode.autocomplete.isDocumentTooLarge
 import com.oxidecode.autocomplete.isTextTooLarge
 import com.oxidecode.detectLanguageId
+import com.oxidecode.projectRelativeUnixPath
 import com.oxidecode.settings.OxideCodeSettings
 import java.awt.KeyboardFocusManager
 import java.util.WeakHashMap
@@ -39,8 +40,9 @@ class NesEditorListener : EditorFactoryListener {
 
     override fun editorCreated(event: EditorFactoryEvent) {
         val editor = event.editor
+        if (editor.editorKind != EditorKind.MAIN_EDITOR) return
         val tracker = service<NesSessionTracker>()
-        absoluteUnixPath(editor.document)?.let { tracker.ensureOriginalContent(it, editor.document.text) }
+        projectRelativeUnixPath(editor.project, editor.document)?.let { tracker.ensureOriginalContent(it, editor.document.text) }
 
         val docListener = NesDocumentListener(editor)
         editor.document.addDocumentListener(docListener)
@@ -50,6 +52,11 @@ class NesEditorListener : EditorFactoryListener {
             override fun caretPositionChanged(e: CaretEvent) {
                 val newLine = e.newPosition.line
                 NesHintManager.handleCaretMove(editor, newLine)
+
+                // Track cursor position for file-chunk building (mirrors original's trackCursorPosition()).
+                val filepath = projectRelativeUnixPath(editor.project, editor.document) ?: return
+                val offset = editor.caretModel.offset
+                service<NesSessionTracker>().recordCursorPosition(filepath, newLine, offset)
             }
         }
         editor.caretModel.addCaretListener(caretListener)
@@ -57,7 +64,7 @@ class NesEditorListener : EditorFactoryListener {
 
         val selectionListener = object : SelectionListener {
             override fun selectionChanged(e: SelectionEvent) {
-                val filepath = absoluteUnixPath(editor.document) ?: return
+                val filepath = projectRelativeUnixPath(editor.project, editor.document) ?: return
                 val selectionModel = editor.selectionModel
                 if (!selectionModel.hasSelection()) return
 
@@ -116,7 +123,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         if (removed.isEmpty() && inserted.isEmpty()) return
 
         val document = event.document
-        val filepath = absoluteUnixPath(document) ?: return
+        val filepath = projectRelativeUnixPath(editor.project, document) ?: return
         val offset = event.offset
         val startPos = editor.offsetToLogicalPosition(offset)
         val now = System.currentTimeMillis()
@@ -172,6 +179,19 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     completionModel = settings.completionModel,
                     nesPromptStyle = settings.nesPromptStyle,
                     deltasJson = tracker.snapshotHistoryJson(),
+                    historyPrompt = tracker.snapshotHistoryPrompt(),
+                    highResDeltasJson = tracker.snapshotHighResHistoryJson(),
+                    highResHistoryPrompt = tracker.snapshotHighResHistoryPrompt(),
+                    fileChunksJson = tracker.snapshotFileChunksJson(
+                        editor,
+                        requestContext.filepath,
+                        requestContext.cursorLine,
+                    ),
+                    retrievalChunksJson = tracker.snapshotRetrievalChunksJson(),
+                    changesAboveCursor = tracker.hasChangesAboveCursor(
+                        requestContext.filepath,
+                        requestContext.cursorLine,
+                    ),
                     cursorFilepath = requestContext.filepath,
                     cursorLine = requestContext.cursorLine,
                     cursorCol = requestContext.cursorCol,
@@ -208,7 +228,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
 
     private fun buildRequestContext(): NesRequestContext? {
         val project = editor.project ?: return null
-        val filepath = absoluteUnixPath(editor.document) ?: return null
+        val filepath = projectRelativeUnixPath(project, editor.document) ?: return null
         if (getSuppressionReason(project, filepath) != null) return null
         if (isDocumentTooLarge(editor.document)) return null
 

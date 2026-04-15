@@ -72,6 +72,12 @@ class CoreBridge {
         completionModel: String,
         nesPromptStyle: String,
         deltasJson: String,
+        historyPrompt: String,
+        highResDeltasJson: String,
+        highResHistoryPrompt: String,
+        fileChunksJson: String,
+        retrievalChunksJson: String,
+        changesAboveCursor: Boolean,
         cursorFilepath: String,
         cursorLine: Int,
         cursorCol: Int,
@@ -108,7 +114,6 @@ class CoreBridge {
                 arch.contains("aarch64") || arch.contains("arm") -> "arm64"
                 else -> "x64"
             }
-
             val resourcePath = "/native/oxidecode_jvm_${archTag}.$ext"
             val stream = CoreBridge::class.java.getResourceAsStream(resourcePath)
                 ?: error("Native library not found in jar: $resourcePath")
@@ -121,6 +126,9 @@ class CoreBridge {
                     input.copyTo(output)
                 }
             }
+
+            // logs the absolute pfad
+            // another testing comm
 
             LOG.info("Loading native library from ${tempLib.absolutePath}")
             System.load(tempLib.absolutePath)

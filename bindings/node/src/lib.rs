@@ -252,6 +252,7 @@ pub async fn predict_next_edit(
             filepath: d.filepath,
             start_line: d.start_line,
             start_col: d.start_col,
+            start_offset: None,
             removed: d.removed,
             inserted: d.inserted,
             file_content: d.file_content,
@@ -269,6 +270,12 @@ pub async fn predict_next_edit(
             &file_content,
             &language,
             original_file_content.as_deref(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
             cancel,
         )
         .await;

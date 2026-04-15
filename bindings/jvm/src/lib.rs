@@ -1,5 +1,5 @@
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jstring};
+use jni::sys::{jboolean, jint, jstring};
 use jni::JNIEnv;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use tracing_subscriber;
 use oxidecode_core::{
     autocomplete::{CompletionContext, CompletionEngine},
     config::{AutocompleteConfig, CompletionEndpoint, NesConfig, NesPromptStyle},
-    nes::{EditDelta, NesEngine},
+    nes::{EditDelta, FileChunk, NesEngine},
     providers::OmniProvider,
 };
 
@@ -201,7 +201,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
 
 // ─── NES ─────────────────────────────────────────────────────────────────────
 
-/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, completionModel, nesPromptStyle, deltasJson, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint, originalFileContent, calibrationLogDir) -> String (JSON NesHint)`
+/// `OxideCore.predictNextEdit(baseUrl, apiKey, model, completionModel, nesPromptStyle, deltasJson, highResDeltasJson, fileChunksJson, changesAboveCursor, cursorFile, cursorLine, cursorCol, fileContent, language, completionEndpoint, originalFileContent, calibrationLogDir) -> String (JSON NesHint)`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     mut env: JNIEnv,
@@ -212,6 +212,12 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     completion_model: JString,
     nes_prompt_style: JString,
     deltas_json: JString,
+    history_prompt: JString,
+    high_res_deltas_json: JString,
+    high_res_history_prompt: JString,
+    file_chunks_json: JString,
+    retrieval_chunks_json: JString,
+    changes_above_cursor: jboolean,
     cursor_filepath: JString,
     cursor_line: jint,
     cursor_col: jint,
@@ -228,6 +234,12 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     let completion_model: String = env.get_string(&completion_model).unwrap().into();
     let nes_prompt_style: String = env.get_string(&nes_prompt_style).unwrap().into();
     let deltas_json: String = env.get_string(&deltas_json).unwrap().into();
+    let history_prompt: String = env.get_string(&history_prompt).unwrap().into();
+    let high_res_deltas_json: String = env.get_string(&high_res_deltas_json).unwrap().into();
+    let high_res_history_prompt: String =
+        env.get_string(&high_res_history_prompt).unwrap().into();
+    let file_chunks_json: String = env.get_string(&file_chunks_json).unwrap().into();
+    let retrieval_chunks_json: String = env.get_string(&retrieval_chunks_json).unwrap().into();
     let cursor_filepath: String = env.get_string(&cursor_filepath).unwrap().into();
     let file_content: String = env.get_string(&file_content).unwrap().into();
     let language: String = env.get_string(&language).unwrap().into();
@@ -264,12 +276,20 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
 
     let endpoint = parse_completion_endpoint(&completion_endpoint);
     let deltas: Vec<EditDelta> = serde_json::from_str(&deltas_json).unwrap_or_default();
+    let high_res_deltas: Vec<EditDelta> =
+        serde_json::from_str(&high_res_deltas_json).unwrap_or_default();
+    let file_chunks: Vec<FileChunk> = serde_json::from_str(&file_chunks_json).unwrap_or_default();
+    let retrieval_chunks: Vec<FileChunk> =
+        serde_json::from_str(&retrieval_chunks_json).unwrap_or_default();
 
     info!(
         base_url = %base_url,
         model = %model,
         completion_model = ?completion_model_opt,
         delta_count = deltas.len(),
+        high_res_delta_count = high_res_deltas.len(),
+        file_chunk_count = file_chunks.len(),
+        retrieval_chunk_count = retrieval_chunks.len(),
         filepath = %cursor_filepath,
         line = cursor_line,
         col = cursor_col,
@@ -307,6 +327,20 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         &file_content,
         &language,
         original_file_content_opt,
+        if history_prompt.is_empty() {
+            None
+        } else {
+            Some(history_prompt.as_str())
+        },
+        Some(&file_chunks),
+        Some(&retrieval_chunks),
+        if high_res_history_prompt.is_empty() {
+            None
+        } else {
+            Some(high_res_history_prompt.as_str())
+        },
+        Some(&high_res_deltas),
+        changes_above_cursor != 0,
         cancel,
     ));
 

@@ -451,3 +451,9 @@ data class EditDelta(
     val fileContent: String,
     val timestampMs: Long,
 )
+
+@Serializable
+data class NesFileChunk(
+    val filePath: String,
+    val content: String,
+)

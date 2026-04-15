@@ -140,7 +140,7 @@ impl Default for NesConfig {
     fn default() -> Self {
         Self {
             debounce_ms: 300,
-            edit_history_len: 8,
+            edit_history_len: 6,
             context_tokens: 2048,
             prompt_style: NesPromptStyle::Generic,
             completion_endpoint: CompletionEndpoint::Completions,

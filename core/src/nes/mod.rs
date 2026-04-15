@@ -6,3 +6,4 @@ pub mod prompt;
 pub use delta::EditDelta;
 pub use engine::NesEngine;
 pub use hint::{NesHint, HintPosition};
+pub use prompt::FileChunk;
