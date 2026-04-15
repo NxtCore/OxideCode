@@ -1,6 +1,8 @@
 package com.oxidecode.nes
 
 import com.intellij.codeInsight.template.TemplateManager
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.editor.Editor
@@ -164,9 +166,8 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         debounceJob = scope.launch {
             delay(settings.nesDebounceMs.toLong())
 
-            val requestContext = withContext(Dispatchers.Main) {
-                buildRequestContext()
-            } ?: return@launch
+            val snapshot = capturePredictionSnapshot() ?: return@launch
+            val requestContext = snapshot.requestContext
             val requestId = bridge.newRequestId("ij-nes")
             inFlightRequestId = requestId
 
@@ -182,16 +183,9 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     historyPrompt = tracker.snapshotHistoryPrompt(),
                     highResDeltasJson = tracker.snapshotHighResHistoryJson(),
                     highResHistoryPrompt = tracker.snapshotHighResHistoryPrompt(),
-                    fileChunksJson = tracker.snapshotFileChunksJson(
-                        editor,
-                        requestContext.filepath,
-                        requestContext.cursorLine,
-                    ),
+                    fileChunksJson = snapshot.fileChunksJson,
                     retrievalChunksJson = tracker.snapshotRetrievalChunksJson(),
-                    changesAboveCursor = tracker.hasChangesAboveCursor(
-                        requestContext.filepath,
-                        requestContext.cursorLine,
-                    ),
+                    changesAboveCursor = snapshot.changesAboveCursor,
                     cursorFilepath = requestContext.filepath,
                     cursorLine = requestContext.cursorLine,
                     cursorCol = requestContext.cursorCol,
@@ -224,6 +218,28 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 inFlightRequestId = null
             }
         }
+    }
+
+    private suspend fun capturePredictionSnapshot(): NesPredictionSnapshot? = withContext(Dispatchers.IO) {
+        var snapshot: NesPredictionSnapshot? = null
+        ApplicationManager.getApplication().invokeAndWait {
+            snapshot = runReadAction {
+                val requestContext = buildRequestContext() ?: return@runReadAction null
+                NesPredictionSnapshot(
+                    requestContext = requestContext,
+                    fileChunksJson = tracker.snapshotFileChunksJson(
+                        editor,
+                        requestContext.filepath,
+                        requestContext.cursorLine,
+                    ),
+                    changesAboveCursor = tracker.hasChangesAboveCursor(
+                        requestContext.filepath,
+                        requestContext.cursorLine,
+                    ),
+                )
+            }
+        }
+        snapshot
     }
 
     private fun buildRequestContext(): NesRequestContext? {
@@ -290,4 +306,10 @@ private data class NesRequestContext(
     val content: String,
     val originalContent: String,
     val language: String,
+)
+
+private data class NesPredictionSnapshot(
+    val requestContext: NesRequestContext,
+    val fileChunksJson: String,
+    val changesAboveCursor: Boolean,
 )

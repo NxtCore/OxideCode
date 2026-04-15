@@ -127,9 +127,6 @@ class CoreBridge {
                 }
             }
 
-            // logs the absolute pfad
-            // another testing comm
-
             LOG.info("Loading native library from ${tempLib.absolutePath}")
             System.load(tempLib.absolutePath)
             loaded = true
