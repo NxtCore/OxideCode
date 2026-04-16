@@ -259,11 +259,26 @@ fn select_best_hunk(hunks: Vec<DiffHunk>, cursor_offset: usize) -> Option<DiffHu
 }
 
 fn byte_offset_for_line_col(text: &str, line: u32, col: u32) -> usize {
+    fn utf16_col_to_byte_offset(line_text: &str, col_utf16: usize) -> usize {
+        let mut units = 0usize;
+        let mut bytes = 0usize;
+        for ch in line_text.chars() {
+            let next_units = units + ch.len_utf16();
+            if next_units > col_utf16 {
+                break;
+            }
+            units = next_units;
+            bytes += ch.len_utf8();
+        }
+        bytes
+    }
+
     let mut offset = 0usize;
     for (i, segment) in text.split_inclusive('\n').enumerate() {
         if i == line as usize {
-            let visible_len = segment.strip_suffix('\n').map_or(segment.len(), str::len);
-            return offset + (col as usize).min(visible_len);
+            let visible = segment.strip_suffix('\n').unwrap_or(segment);
+            let col_bytes = utf16_col_to_byte_offset(visible, col as usize);
+            return offset + col_bytes.min(visible.len());
         }
         offset += segment.len();
     }
@@ -1081,9 +1096,8 @@ impl NesEngine {
                 .rev()
                 .filter_map(|edit| {
                     let text = &edit.file_content;
-                    let start_offset = edit
-                        .start_offset
-                        .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
+                    let start_offset =
+                        byte_offset_for_line_col(text, edit.start_line, edit.start_col);
 
                     let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
                     let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
@@ -1151,9 +1165,8 @@ impl NesEngine {
                     .rev()
                     .filter_map(|edit| {
                         let text = &edit.file_content;
-                        let start_offset = edit
-                            .start_offset
-                            .unwrap_or_else(|| byte_offset_for_line_col(text, edit.start_line, edit.start_col));
+                        let start_offset =
+                            byte_offset_for_line_col(text, edit.start_line, edit.start_col);
 
                         let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
                         let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());

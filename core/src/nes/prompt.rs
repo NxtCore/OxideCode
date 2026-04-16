@@ -193,11 +193,26 @@ fn compute_cursor_offset(
     cursor_line: u32,
     cursor_col: u32,
 ) -> usize {
+    fn utf16_col_to_byte_offset(line_text: &str, col_utf16: usize) -> usize {
+        let mut units = 0usize;
+        let mut bytes = 0usize;
+        for ch in line_text.chars() {
+            let next_units = units + ch.len_utf16();
+            if next_units > col_utf16 {
+                break;
+            }
+            units = next_units;
+            bytes += ch.len_utf8();
+        }
+        bytes
+    }
+
     let max_row = line_starts.len().saturating_sub(1) as u32;
     let row = cursor_line.min(max_row);
     let row_start = row_start_offset(line_starts, row);
-    let row_len = row_end_offset(text, line_starts, row).saturating_sub(row_start);
-    row_start + (cursor_col as usize).min(row_len)
+    let row_end = row_end_offset(text, line_starts, row);
+    let line_text = &text[row_start..row_end];
+    row_start + utf16_col_to_byte_offset(line_text, cursor_col as usize).min(line_text.len())
 }
 
 fn expand_symmetric(
@@ -403,6 +418,20 @@ fn cursor_byte_offset_in_context(
     cursor_line: u32,
     cursor_col: u32,
 ) -> usize {
+    fn utf16_col_to_byte_offset(line_text: &str, col_utf16: usize) -> usize {
+        let mut units = 0usize;
+        let mut bytes = 0usize;
+        for ch in line_text.chars() {
+            let next_units = units + ch.len_utf16();
+            if next_units > col_utf16 {
+                break;
+            }
+            units = next_units;
+            bytes += ch.len_utf8();
+        }
+        bytes
+    }
+
     // Bytes contributed by every full line from context_start_line up to
     // (but not including) cursor_line, each followed by \n.
     let before: usize = file_lines[context_start_line as usize..cursor_line as usize]
@@ -410,12 +439,10 @@ fn cursor_byte_offset_in_context(
         .map(|l| l.len() + 1)
         .sum();
 
-    let col = (cursor_col as usize).min(
-        file_lines
-            .get(cursor_line as usize)
-            .map(|l| l.len())
-            .unwrap_or(0),
-    );
+    let col = file_lines
+        .get(cursor_line as usize)
+        .map(|line| utf16_col_to_byte_offset(line, cursor_col as usize).min(line.len()))
+        .unwrap_or(0);
 
     before + col
 }
@@ -1342,10 +1369,18 @@ pub fn build_sweep_prompt(
         .saturating_sub(block_start_offset)
         .min(code_block.len());
 
+    fn clamp_to_char_boundary(text: &str, mut offset: usize) -> usize {
+        offset = offset.min(text.len());
+        while offset > 0 && !text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    }
+
     // 3. Insert <|cursor|> marker at the cursor position before computing the
     //    previous section so we can mirror Python's exact
     //    `format_recent_changes_and_prev_section` behavior.
-    let relative_cursor_offset = relative_cursor_offset.min(code_block.len());
+    let relative_cursor_offset = clamp_to_char_boundary(&code_block, relative_cursor_offset);
     let code_block_with_cursor = format!(
         "{}{}{}",
         &code_block[..relative_cursor_offset],
@@ -1365,6 +1400,7 @@ pub fn build_sweep_prompt(
     }
 
     // 6. Rebuild the cursor-marked block after newline normalization.
+    let relative_cursor_offset = clamp_to_char_boundary(&code_block, relative_cursor_offset);
     let code_block_with_cursor = format!(
         "{}{}{}",
         &code_block[..relative_cursor_offset],
