@@ -411,7 +411,7 @@ fn parse_hunk_like_original(hunk: &str) -> Option<(u32, Vec<String>, u32, Vec<St
         return None;
     }
 
-    let input_start = parts[1]
+    let mut input_start = parts[1]
         .trim_start_matches('-')
         .split(',')
         .next()?
@@ -435,6 +435,10 @@ fn parse_hunk_like_original(hunk: &str) -> Option<(u32, Vec<String>, u32, Vec<St
             input_lines.push(rest.to_string());
             output_lines.push(rest.to_string());
         }
+    }
+
+    if input_lines.is_empty() {
+        input_start = input_start.saturating_add(1);
     }
 
     Some((input_start, input_lines, output_start, output_lines))

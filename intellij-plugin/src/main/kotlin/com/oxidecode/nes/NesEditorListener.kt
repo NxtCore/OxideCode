@@ -179,13 +179,13 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     model = settings.model,
                     completionModel = settings.completionModel,
                     nesPromptStyle = settings.nesPromptStyle,
-                    deltasJson = tracker.snapshotHistoryJson(),
-                    historyPrompt = tracker.snapshotHistoryPrompt(),
-                    highResDeltasJson = tracker.snapshotHighResHistoryJson(),
-                    highResHistoryPrompt = tracker.snapshotHighResHistoryPrompt(),
-                    fileChunksJson = snapshot.fileChunksJson,
-                    retrievalChunksJson = tracker.snapshotRetrievalChunksJson(),
-                    changesAboveCursor = snapshot.changesAboveCursor,
+                    deltasJson = snapshot.promptPayload.deltasJson,
+                    historyPrompt = snapshot.promptPayload.historyPrompt,
+                    highResDeltasJson = snapshot.promptPayload.highResDeltasJson,
+                    highResHistoryPrompt = snapshot.promptPayload.highResHistoryPrompt,
+                    fileChunksJson = snapshot.promptPayload.fileChunksJson,
+                    retrievalChunksJson = snapshot.promptPayload.retrievalChunksJson,
+                    changesAboveCursor = snapshot.promptPayload.changesAboveCursor,
                     cursorFilepath = requestContext.filepath,
                     cursorLine = requestContext.cursorLine,
                     cursorCol = requestContext.cursorCol,
@@ -227,12 +227,8 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                 val requestContext = buildRequestContext() ?: return@runReadAction null
                 NesPredictionSnapshot(
                     requestContext = requestContext,
-                    fileChunksJson = tracker.snapshotFileChunksJson(
+                    promptPayload = tracker.snapshotPromptPayload(
                         editor,
-                        requestContext.filepath,
-                        requestContext.cursorLine,
-                    ),
-                    changesAboveCursor = tracker.hasChangesAboveCursor(
                         requestContext.filepath,
                         requestContext.cursorLine,
                     ),
@@ -310,6 +306,5 @@ private data class NesRequestContext(
 
 private data class NesPredictionSnapshot(
     val requestContext: NesRequestContext,
-    val fileChunksJson: String,
-    val changesAboveCursor: Boolean,
+    val promptPayload: NesPromptPayload,
 )

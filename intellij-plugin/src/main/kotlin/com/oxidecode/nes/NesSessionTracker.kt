@@ -419,6 +419,48 @@ class NesSessionTracker {
 
     fun snapshotRetrievalChunksJson(): String = Json.encodeToString(getClipboardChunks())
 
+    /**
+     * Captures all prompt-related tracker payload in one pass so JNI requests can
+     * use a consistent snapshot.
+     *
+     * Must be called from the EDT.
+     */
+    fun snapshotPromptPayload(
+        activeEditor: Editor,
+        currentFilepath: String,
+        currentCursorLine: Int,
+    ): NesPromptPayload {
+        val fileChunksJson = snapshotFileChunksJson(activeEditor, currentFilepath, currentCursorLine)
+        val retrievalChunksJson = snapshotRetrievalChunksJson()
+
+        val (deltasJson, historyPrompt, highResDeltasJson, highResHistoryPrompt, changesAboveCursor) = synchronized(lock) {
+            flushAllPendingLocked()
+            Quintuple(
+                Json.encodeToString(history.toList()),
+                promptHistory
+                    .takeLast(MAX_HISTORY_LEN)
+                    .map { it.formattedDiff }
+                    .joinToString("\n"),
+                Json.encodeToString(highResHistory.toList()),
+                promptHighResHistory
+                    .takeLast(MAX_HIGH_RES_HISTORY_LEN)
+                    .map { it.formattedDiff }
+                    .joinToString("\n"),
+                history.asReversed().any { it.filepath == currentFilepath && it.startLine <= currentCursorLine },
+            )
+        }
+
+        return NesPromptPayload(
+            deltasJson = deltasJson,
+            historyPrompt = historyPrompt,
+            highResDeltasJson = highResDeltasJson,
+            highResHistoryPrompt = highResHistoryPrompt,
+            fileChunksJson = fileChunksJson,
+            retrievalChunksJson = retrievalChunksJson,
+            changesAboveCursor = changesAboveCursor,
+        )
+    }
+
     fun hasChangesAboveCursor(filepath: String, cursorLine: Int): Boolean = synchronized(lock) {
         flushAllPendingLocked()
         history.asReversed().any { it.filepath == filepath && it.startLine <= cursorLine }
@@ -687,3 +729,21 @@ class NesSessionTracker {
         promptHighResHistory.addLast(edit)
     }
 }
+
+data class NesPromptPayload(
+    val deltasJson: String,
+    val historyPrompt: String,
+    val highResDeltasJson: String,
+    val highResHistoryPrompt: String,
+    val fileChunksJson: String,
+    val retrievalChunksJson: String,
+    val changesAboveCursor: Boolean,
+)
+
+private data class Quintuple<A, B, C, D, E>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D,
+    val fifth: E,
+)

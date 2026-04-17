@@ -1330,7 +1330,7 @@ pub fn build_sweep_prompt(
     original_file_contents: &str,
     cursor_position: usize,
     recent_changes: &[RecentChange],
-    _extra_recent_changes: Option<&[RecentChange]>,
+    extra_recent_changes: Option<&[RecentChange]>,
     retrieval_chunks: Option<&[FileChunk]>,
     file_chunks: Option<&[FileChunk]>,
     changes_above_cursor: bool,
@@ -1390,8 +1390,11 @@ pub fn build_sweep_prompt(
 
     // 4. Compute prev_section by reversing changes directly inside the
     //    extracted cursor block, matching Python's substring-based logic.
+    // Prefer high-res recent changes (when available) for previous-section reconstruction
+    // so the reverted block reflects the most up-to-date granular edit sequence.
+    let prev_changes = extra_recent_changes.unwrap_or(recent_changes);
     let (mut prev_section, _prev_sections) =
-        apply_recent_changes_to_section(recent_changes, &code_block_with_cursor);
+        apply_recent_changes_to_section(prev_changes, &code_block_with_cursor);
 
     // 5. Match Python's trailing-newline normalization before prompt assembly.
     if code_block.ends_with('\n') && prev_section.ends_with('\n') {
