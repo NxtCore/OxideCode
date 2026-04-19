@@ -1,14 +1,23 @@
 package com.oxidecode.nes
 
+import com.intellij.codeInsight.lookup.LookupManager
+import com.intellij.codeInsight.lookup.impl.LookupImpl
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
+import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.PsiSearchHelper
 import com.oxidecode.projectRelativeUnixPath
 import java.awt.Point
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
+import java.util.concurrent.TimeUnit
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -30,6 +39,14 @@ private const val MAX_CHUNKS_TO_SEND = 5
 
 // Max lines from clipboard to include in file chunks
 private const val MAX_CLIPBOARD_LINES = 20
+
+// Retrieval constants (mirrors Sweep retrieval limits).
+private const val MAX_RETRIEVAL_CHUNK_SIZE_LINES = 25
+private const val MAX_RETRIEVAL_TERMS = 5
+private const val MAX_RETRIEVAL_RESULTS_PER_TERM = 50
+private const val MAX_DEFINITIONS_TO_FETCH = 6
+private const val MAX_USAGES_TO_FETCH = 6
+private const val MAX_SEARCH_TIMEOUT_MS = 30L
 
 // How many lines to expand a visible area chunk by on each side for open-tab chunks
 private const val VISIBLE_CHUNK_EXPAND = 50
@@ -235,6 +252,10 @@ private fun shouldCombineWithPreviousEdit(previousEdit: EditRecord?, currentEdit
 
 @Service
 class NesSessionTracker {
+    companion object {
+        private val LOG = Logger.getInstance(NesSessionTracker::class.java)
+    }
+
     private val lock = Any()
     private val history = ArrayDeque<EditDelta>(MAX_HISTORY_LEN)
     private val highResHistory = ArrayDeque<EditDelta>(MAX_HIGH_RES_HISTORY_LEN)
@@ -417,7 +438,25 @@ class NesSessionTracker {
         return Json.encodeToString(all)
     }
 
-    fun snapshotRetrievalChunksJson(): String = Json.encodeToString(getClipboardChunks())
+    fun snapshotRetrievalChunksJson(
+        activeEditor: Editor,
+        currentFilepath: String,
+    ): String {
+        val project = activeEditor.project ?: return "[]"
+        val chunks = mutableListOf<NesFileChunk>()
+        chunks += getDropdownChunks(project)
+        chunks += getClipboardChunks()
+        chunks += getCurrentLineEntityUsages(activeEditor, project, currentFilepath)
+        chunks += getDefinitionsBeforeCursor(activeEditor, project, currentFilepath)
+
+        val deduped = chunks
+            .map { it.truncateLines(MAX_RETRIEVAL_CHUNK_SIZE_LINES) }
+            .filter { it.filePath != currentFilepath && it.content.isNotBlank() }
+            .distinctBy { it.filePath to it.content }
+            .asReversed()
+
+        return Json.encodeToString(deduped)
+    }
 
     /**
      * Captures all prompt-related tracker payload in one pass so JNI requests can
@@ -431,7 +470,7 @@ class NesSessionTracker {
         currentCursorLine: Int,
     ): NesPromptPayload {
         val fileChunksJson = snapshotFileChunksJson(activeEditor, currentFilepath, currentCursorLine)
-        val retrievalChunksJson = snapshotRetrievalChunksJson()
+        val retrievalChunksJson = snapshotRetrievalChunksJson(activeEditor, currentFilepath)
 
         val (deltasJson, historyPrompt, highResDeltasJson, highResHistoryPrompt, changesAboveCursor) = synchronized(lock) {
             flushAllPendingLocked()
@@ -607,6 +646,142 @@ class NesSessionTracker {
         listOf(NesFileChunk(filePath = "clipboard.txt", content = lines.joinToString("\n")))
     }.getOrElse { emptyList() }
 
+    private fun getDropdownChunks(project: Project): List<NesFileChunk> = runCatching {
+        val lookup = LookupManager.getInstance(project).activeLookup as? LookupImpl ?: return@runCatching emptyList()
+        val content = lookup.items
+            .take(10)
+            .joinToString("\n") { it.lookupString }
+            .trim()
+        if (content.isBlank()) emptyList() else listOf(NesFileChunk(filePath = "dropdown.txt", content = content))
+    }.getOrElse { emptyList() }
+
+    private fun getDefinitionsBeforeCursor(
+        editor: Editor,
+        project: Project,
+        currentFilepath: String,
+    ): List<NesFileChunk> = runCatching {
+        val document = editor.document
+        val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document) ?: return@runCatching emptyList()
+        val cursorOffset = editor.caretModel.offset
+        val line = document.getLineNumber(cursorOffset)
+        val lineStart = document.getLineStartOffset(line)
+        val lineEnd = document.getLineEndOffset(line)
+        val chars = document.charsSequence
+        val delimiters = "(){}[]<>,.;:=+-*/%!&|^~?"
+        val results = mutableListOf<NesFileChunk>()
+        val seen = mutableSetOf<String>()
+
+        fun processAt(offset: Int): Boolean {
+            val element = psiFile.findElementAt(offset) ?: return false
+            val target = element.reference?.resolve() ?: element.parent?.reference?.resolve() ?: return false
+            val targetFile = target.containingFile?.virtualFile
+            val targetPath = targetFile?.path ?: return false
+            val relPath = projectRelativeUnixPath(project, targetPath) ?: targetPath
+            if (relPath == currentFilepath) return false
+            val text = runCatching { target.text }.getOrNull()?.trim().orEmpty()
+            if (text.isBlank()) return false
+            val key = "$relPath:${target.textOffset}:${text.length}"
+            if (!seen.add(key)) return false
+            results += NesFileChunk(relPath, text)
+            return true
+        }
+
+        var i = (cursorOffset - 1).coerceAtLeast(lineStart)
+        while (i >= lineStart && results.size < MAX_DEFINITIONS_TO_FETCH) {
+            while (i >= lineStart && (chars[i].isWhitespace() || delimiters.contains(chars[i]))) i--
+            if (i < lineStart) break
+            processAt(i)
+            while (i >= lineStart && !(chars[i].isWhitespace() || delimiters.contains(chars[i]))) i--
+        }
+
+        i = cursorOffset.coerceAtMost(lineEnd)
+        while (i < lineEnd && results.size < MAX_DEFINITIONS_TO_FETCH) {
+            while (i < lineEnd && (chars[i].isWhitespace() || delimiters.contains(chars[i]))) i++
+            if (i >= lineEnd) break
+            processAt(i)
+            while (i < lineEnd && !(chars[i].isWhitespace() || delimiters.contains(chars[i]))) i++
+        }
+
+        results
+    }.getOrElse {
+        LOG.debug("Failed collecting definition chunks", it)
+        emptyList()
+    }
+
+    private fun getCurrentLineEntityUsages(
+        editor: Editor,
+        project: Project,
+        currentFilepath: String,
+    ): List<NesFileChunk> = runCatching {
+        val document = editor.document
+        val textBeforeCursor = document.charsSequence.subSequence(0, editor.caretModel.offset.coerceAtMost(document.textLength)).toString()
+        val searchText = textBeforeCursor.lines().takeLast(3).joinToString(" ")
+        val terms = searchText
+            .replace(Regex("[^A-Za-z0-9_]"), " ")
+            .split(Regex("\\s+"))
+            .filter { it.length >= 3 && !it.all(Char::isDigit) }
+            .distinct()
+            .takeLast(MAX_RETRIEVAL_TERMS)
+        if (terms.isEmpty()) return@runCatching emptyList()
+
+        val scope = GlobalSearchScope.projectScope(project)
+        val searchHelper = PsiSearchHelper.getInstance(project)
+        val chunks = mutableListOf<NesFileChunk>()
+        val seen = mutableSetOf<String>()
+        val currentExt = currentFilepath.substringAfterLast('.', "")
+
+        for (term in terms.asReversed()) {
+            if (chunks.size >= MAX_USAGES_TO_FETCH) break
+            val started = System.currentTimeMillis()
+            val future = ReadAction
+                .nonBlocking<List<NesFileChunk>> {
+                    val local = mutableListOf<NesFileChunk>()
+                    searchHelper.processAllFilesWithWord(
+                        term,
+                        scope,
+                        { psi ->
+                            if (local.size >= MAX_RETRIEVAL_RESULTS_PER_TERM) return@processAllFilesWithWord false
+                            val vf = psi.virtualFile ?: return@processAllFilesWithWord true
+                            val rel = projectRelativeUnixPath(project, vf.path) ?: vf.path
+                            if (rel == currentFilepath) return@processAllFilesWithWord true
+                            val ext = rel.substringAfterLast('.', "")
+                            if (currentExt.isNotEmpty() && ext != currentExt) return@processAllFilesWithWord true
+                            val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return@processAllFilesWithWord true
+                            val lines = doc.text.lines()
+                            for ((idx, line) in lines.withIndex()) {
+                                if (!line.contains(term)) continue
+                                val start = maxOf(1, idx + 1 - 9)
+                                val end = minOf(lines.size, idx + 1 + 9)
+                                val content = lines.subList(start - 1, end).joinToString("\n")
+                                val key = "$rel:$start:$end:${content.hashCode()}"
+                                if (seen.add(key)) {
+                                    local += NesFileChunk(rel, content)
+                                }
+                                if (local.size >= MAX_RETRIEVAL_RESULTS_PER_TERM) break
+                            }
+                            true
+                        },
+                        true,
+                    )
+                    local
+                }
+                .submit(AppExecutorHolder.executor)
+
+            val termChunks = try {
+                future.get(MAX_SEARCH_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            } catch (_: Exception) {
+                future.cancel(false)
+                emptyList()
+            }
+            chunks += termChunks
+            if (System.currentTimeMillis() - started > MAX_SEARCH_TIMEOUT_MS * 2) break
+        }
+        chunks.take(MAX_USAGES_TO_FETCH)
+    }.getOrElse {
+        LOG.debug("Failed collecting usage chunks", it)
+        emptyList()
+    }
+
     private fun reconstructBeforeContent(delta: EditDelta): String {
         val start = delta.startOffset.coerceIn(0, delta.fileContent.length)
         val insertedEnd = (start + delta.inserted.length).coerceAtMost(delta.fileContent.length)
@@ -747,3 +922,13 @@ private data class Quintuple<A, B, C, D, E>(
     val fourth: D,
     val fifth: E,
 )
+
+private object AppExecutorHolder {
+    val executor = com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService()
+}
+
+private fun NesFileChunk.truncateLines(maxLines: Int): NesFileChunk {
+    if (maxLines <= 0) return this
+    val lines = content.lines()
+    return if (lines.size <= maxLines) this else copy(content = lines.take(maxLines).joinToString("\n"))
+}
