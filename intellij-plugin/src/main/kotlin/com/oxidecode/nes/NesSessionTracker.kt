@@ -250,7 +250,7 @@ private fun shouldCombineWithPreviousEdit(previousEdit: EditRecord?, currentEdit
     return diffHunks <= previousEdit.diffHunks
 }
 
-@Service
+@Service(Service.Level.PROJECT)
 class NesSessionTracker {
     companion object {
         private val LOG = Logger.getInstance(NesSessionTracker::class.java)
@@ -276,8 +276,18 @@ class NesSessionTracker {
         }
     }
 
+    fun refreshOriginalContent(filepath: String, content: String) {
+        synchronized(lock) {
+            originalFileContents[filepath] = content
+        }
+    }
+
     fun getOriginalContent(filepath: String): String? = synchronized(lock) {
         originalFileContents[filepath]
+    }
+
+    fun hasTrackedChanges(filepath: String): Boolean = synchronized(lock) {
+        pendingDeltas.containsKey(filepath) || history.any { it.filepath == filepath }
     }
 
     fun recordChange(

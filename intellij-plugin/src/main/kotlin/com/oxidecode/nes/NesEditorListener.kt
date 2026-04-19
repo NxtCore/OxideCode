@@ -245,6 +245,9 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         if (isDocumentTooLarge(editor.document)) return null
 
         val content = editor.document.text
+        if (!tracker.hasTrackedChanges(filepath)) {
+            tracker.refreshOriginalContent(filepath, content)
+        }
         val originalContent = tracker.getOriginalContent(filepath) ?: content
         if (isTextTooLarge(originalContent)) return null
         if (content == originalContent) return null
