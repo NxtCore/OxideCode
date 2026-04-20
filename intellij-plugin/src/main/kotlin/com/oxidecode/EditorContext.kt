@@ -18,10 +18,10 @@ fun projectRelativeUnixPath(project: Project?, document: Document): String? {
 fun projectRelativeUnixPath(project: Project?, path: String): String? {
     val basePath = project?.basePath ?: return null
     return try {
-        val basePathNorm = File(basePath).toPath().normalize().toString()
-        val fullPathNorm = File(path).toPath().normalize().toString()
+        val basePathNorm = File(basePath).toPath().normalize()
+        val fullPathNorm = File(path).toPath().normalize()
         if (fullPathNorm.startsWith(basePathNorm)) {
-            fullPathNorm.substring(basePathNorm.length).trimStart(File.separatorChar)
+            basePathNorm.relativize(fullPathNorm).toString().trimStart(File.separatorChar)
         } else {
             null
         }

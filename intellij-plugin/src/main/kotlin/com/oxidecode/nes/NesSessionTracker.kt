@@ -39,6 +39,9 @@ private const val MAX_CHUNKS_TO_SEND = 5
 
 // Max lines from clipboard to include in file chunks
 private const val MAX_CLIPBOARD_LINES = 20
+// For Sweep prompt parity, avoid sampling arbitrary system clipboard text.
+// Original flow uses tracked clipboard entries (freshness-gated) rather than raw clipboard snapshots.
+private const val INCLUDE_SYSTEM_CLIPBOARD_CHUNK = false
 
 // Retrieval constants (mirrors Sweep retrieval limits).
 private const val MAX_RETRIEVAL_CHUNK_SIZE_LINES = 25
@@ -645,6 +648,7 @@ class NesSessionTracker {
      * Returns a clipboard chunk if the clipboard contains text, capped at [MAX_CLIPBOARD_LINES].
      */
     private fun getClipboardChunks(): List<NesFileChunk> = runCatching {
+        if (!INCLUDE_SYSTEM_CLIPBOARD_CHUNK) return@runCatching emptyList()
         val text = (Toolkit.getDefaultToolkit()
             .systemClipboard
             .getData(DataFlavor.stringFlavor) as? String)

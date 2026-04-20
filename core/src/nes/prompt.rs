@@ -1006,6 +1006,13 @@ pub mod sweep {
     /// Number of lines to prefill when in insertion-above-cursor mode.
     /// Python: `NUM_LINES_ABOVE = 1` inside `compute_prefill`.
     pub const PREFILL_LINES_ABOVE: usize = 1;
+
+    // Prompt packing/truncation parity with backend `/backend/next_edit_autocomplete`.
+    pub const CHARS_PER_TOKEN: f64 = 3.5;
+    pub const MAX_INPUT_TOKENS_COUNT: usize = (8192 * 4) - 256;
+    pub const CHARACTER_BOUND_TO_CHECK_TOKENIZATION: usize = (8192 * 2) - 256;
+    pub const CHARACTER_BOUND_TO_SKIP_TOKENIZATION: usize = (8192 * 4) * 2;
+    pub const MAX_RETRIEVAL_TOKENS_COUNT: usize = 2048;
 }
 
 // ─── Helper: splitlines with terminators ─────────────────────────────────────
@@ -1047,6 +1054,46 @@ pub struct FileChunk {
 impl FileChunk {
     pub fn to_string_repr(&self) -> String {
         format!("{}{}\n{}\n", sweep::FILE_SEP, self.file_path, self.content)
+    }
+}
+
+fn estimate_token_count(text: &str) -> usize {
+    (text.len() as f64 / sweep::CHARS_PER_TOKEN) as usize
+}
+
+fn pack_chunks_for_prompt(
+    chunks: &[FileChunk],
+    token_limit: usize,
+    truncate_from_end: bool,
+) -> Vec<FileChunk> {
+    let char_limit = (token_limit as f64 * sweep::CHARS_PER_TOKEN) as usize;
+    let mut current_len = 0usize;
+
+    if truncate_from_end {
+        let mut packed = Vec::new();
+        for chunk in chunks {
+            let chunk_str = chunk.to_string_repr();
+            if current_len + chunk_str.len() <= char_limit {
+                packed.push(chunk.clone());
+                current_len += chunk_str.len();
+            } else {
+                break;
+            }
+        }
+        packed
+    } else {
+        let mut packed_rev = Vec::new();
+        for chunk in chunks.iter().rev() {
+            let chunk_str = chunk.to_string_repr();
+            if current_len + chunk_str.len() <= char_limit {
+                packed_rev.push(chunk.clone());
+                current_len += chunk_str.len();
+            } else {
+                break;
+            }
+        }
+        packed_rev.reverse();
+        packed_rev
     }
 }
 
@@ -1419,17 +1466,27 @@ pub fn build_sweep_prompt(
     let _ = has_retrieval; // no longer used for context sizing (matches Python)
     let initial_file = get_lines_around_cursor(original_file_contents, cursor_position);
 
-    // 9. Format retrieval results.
-    let retrieval_results = match retrieval_chunks {
-        Some(chunks) if !chunks.is_empty() => {
+    // 9. Format retrieval results with backend-like packing (`truncate_from_end=False`).
+    let packed_retrieval_chunks = retrieval_chunks
+        .filter(|chunks| !chunks.is_empty())
+        .map(|chunks| {
+            pack_chunks_for_prompt(
+                chunks,
+                sweep::MAX_RETRIEVAL_TOKENS_COUNT,
+                false,
+            )
+        })
+        .unwrap_or_default();
+
+    let retrieval_results = if !packed_retrieval_chunks.is_empty() {
             let mut s = String::new();
-            for chunk in chunks {
+            for chunk in &packed_retrieval_chunks {
                 s.push('\n');
                 s.push_str(&chunk.to_string_repr());
             }
             s
-        }
-        _ => String::new(),
+    } else {
+        String::new()
     };
 
     // 10. Format the recent_changes string for the prompt.
@@ -1464,8 +1521,8 @@ pub fn build_sweep_prompt(
     let start_line = (relative_cursor_line as u32) + 1;
     let end_line = (relative_cursor_line + code_block.lines().count() + 1) as u32;
 
-    // 11. Assemble the prompt.
-    let body = format!(
+    // 11. Assemble the body (without file_chunks prefix).
+    let body_with_retrieval = format!(
         "{file_sep}{file_path}\n\
          {initial_file}{retrieval_results}\n\
          {recent_changes_str}\n\
@@ -1486,17 +1543,73 @@ pub fn build_sweep_prompt(
         end_line = end_line,
         prefill = prefill,
     );
+    let body_without_retrieval = format!(
+        "{file_sep}{file_path}\n\
+         {initial_file}\n\
+         {recent_changes_str}\n\
+         {file_sep}original/{file_path}:{start_line}:{end_line}\n\
+         {prev_section}\n\
+         {file_sep}current/{file_path}:{start_line}:{end_line}\n\
+         {code_block_with_cursor}\n\
+         {file_sep}updated/{file_path}:{start_line}:{end_line}\n\
+         {prefill}",
+        file_sep = sweep::FILE_SEP,
+        file_path = file_path,
+        initial_file = initial_file,
+        recent_changes_str = recent_changes_str,
+        prev_section = prev_section,
+        code_block_with_cursor = code_block_with_cursor,
+        start_line = start_line,
+        end_line = end_line,
+        prefill = prefill,
+    );
 
-    // Prepend file_chunks if provided.
+    // 12. Backend-like prompt truncation behavior for file chunks/retrieval.
     let prompt = if let Some(chunks) = file_chunks {
-        let mut prefix = String::new();
-        for chunk in chunks {
-            prefix.push_str(&chunk.to_string_repr());
+        let formatted_file_chunks: String = chunks.iter().map(|c| c.to_string_repr()).collect();
+        if body_with_retrieval.len() + formatted_file_chunks.len()
+            > sweep::CHARACTER_BOUND_TO_CHECK_TOKENIZATION
+        {
+            let minimal = body_without_retrieval.clone();
+            if minimal.len() > sweep::CHARACTER_BOUND_TO_SKIP_TOKENIZATION {
+                String::new()
+            } else {
+                let minimal_tokens = estimate_token_count(&minimal);
+                let retrieval_tokens = estimate_token_count(&retrieval_results);
+                let chunk_tokens: Vec<usize> = chunks
+                    .iter()
+                    .map(|c| estimate_token_count(&c.content))
+                    .collect();
+                let total_chunk_tokens: usize = chunk_tokens.iter().sum();
+
+                if minimal_tokens + retrieval_tokens + total_chunk_tokens
+                    <= sweep::MAX_INPUT_TOKENS_COUNT
+                {
+                    format!("{formatted_file_chunks}{body_with_retrieval}")
+                } else if minimal_tokens > sweep::MAX_INPUT_TOKENS_COUNT {
+                    String::new()
+                } else if minimal_tokens + retrieval_tokens > sweep::MAX_INPUT_TOKENS_COUNT {
+                    body_without_retrieval
+                } else {
+                    let mut partial_prefix = String::new();
+                    let mut cumulative_chunks = 0usize;
+                    for (chunk, chunk_token_count) in chunks.iter().zip(chunk_tokens.iter()) {
+                        cumulative_chunks += *chunk_token_count;
+                        if minimal_tokens + retrieval_tokens + cumulative_chunks
+                            >= sweep::MAX_INPUT_TOKENS_COUNT
+                        {
+                            break;
+                        }
+                        partial_prefix.push_str(&chunk.to_string_repr());
+                    }
+                    format!("{partial_prefix}{body_with_retrieval}")
+                }
+            }
+        } else {
+            format!("{formatted_file_chunks}{body_with_retrieval}")
         }
-        prefix.push_str(&body);
-        prefix
     } else {
-        body
+        body_with_retrieval
     };
 
     let ctx = SweepPromptContext {

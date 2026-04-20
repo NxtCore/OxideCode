@@ -127,6 +127,8 @@ class CoreBridge {
                 }
             }
 
+            // test comment for native library loading
+
             LOG.info("Loading native library from ${tempLib.absolutePath}")
             System.load(tempLib.absolutePath)
             loaded = true

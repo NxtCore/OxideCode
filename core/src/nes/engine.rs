@@ -1226,6 +1226,10 @@ impl NesEngine {
             None,  // num_lines_before
             None,  // num_lines_after
         );
+        if prompt.is_empty() {
+            debug!("NES Sweep prompt is empty after truncation; skipping request");
+            return None;
+        }
 
         // ── Everything below is unchanged ────────────────────────────────
 

@@ -30,6 +30,8 @@ fun computeDiffGroups(oldContent: String, newContent: String): List<DiffGroup> {
         commonPrefixLen += 1
     }
 
+    // another de
+
     var commonSuffixLen = 0
     while (
         commonSuffixLen < oldContent.length - commonPrefixLen &&
