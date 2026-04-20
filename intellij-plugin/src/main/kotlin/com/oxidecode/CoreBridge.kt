@@ -127,7 +127,8 @@ class CoreBridge {
                 }
             }
 
-            // new test comment he
+            // new test comment here
+            // This is a test comment to ensure the native library is loaded correctly.
 
             LOG.info("Loading native library from ${tempLib.absolutePath}")
             System.load(tempLib.absolutePath)

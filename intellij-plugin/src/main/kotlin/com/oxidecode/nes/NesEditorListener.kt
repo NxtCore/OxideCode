@@ -43,7 +43,8 @@ class NesEditorListener : EditorFactoryListener {
     override fun editorCreated(event: EditorFactoryEvent) {
         val editor = event.editor
         if (editor.editorKind != EditorKind.MAIN_EDITOR) return
-        val tracker = service<NesSessionTracker>()
+        val project = editor.project ?: return
+        val tracker = project.service<NesSessionTracker>()
         projectRelativeUnixPath(editor.project, editor.document)?.let { tracker.ensureOriginalContent(it, editor.document.text) }
 
         val docListener = NesDocumentListener(editor)
@@ -58,7 +59,7 @@ class NesEditorListener : EditorFactoryListener {
                 // Track cursor position for file-chunk building (mirrors original's trackCursorPosition()).
                 val filepath = projectRelativeUnixPath(editor.project, editor.document) ?: return
                 val offset = editor.caretModel.offset
-                service<NesSessionTracker>().recordCursorPosition(filepath, newLine, offset)
+                editor.project?.service<NesSessionTracker>()?.recordCursorPosition(filepath, newLine, offset)
             }
         }
         editor.caretModel.addCaretListener(caretListener)
@@ -74,7 +75,7 @@ class NesEditorListener : EditorFactoryListener {
                 val endLine = editor.document.getLineNumber(selectionModel.selectionEnd)
                 val selectedText = selectionModel.selectedText
                 if (startLine != endLine || selectedText?.contains('\n') == true) {
-                    service<NesSessionTracker>().recordMultiLineSelection(filepath)
+                    editor.project?.service<NesSessionTracker>()?.recordMultiLineSelection(filepath)
                 }
             }
         }
@@ -101,7 +102,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val settings get() = OxideCodeSettings.instance
     private val bridge get() = service<CoreBridge>()
-    private val tracker get() = service<NesSessionTracker>()
+    private val tracker get() = editor.project?.service<NesSessionTracker>()
     private var debounceJob: Job? = null
     private var inFlightRequestId: String? = null
     private var previousContentBeforeChange: String? = null
@@ -116,6 +117,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
 
     override fun documentChanged(event: DocumentEvent) {
         if (!settings.nesEnabled) return
+        val tracker = tracker ?: return
 
         inFlightRequestId?.let(bridge::cancelRequest)
         inFlightRequestId = null
@@ -225,6 +227,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
         ApplicationManager.getApplication().invokeAndWait {
             snapshot = runReadAction {
                 val requestContext = buildRequestContext() ?: return@runReadAction null
+                val tracker = tracker ?: return@runReadAction null
                 NesPredictionSnapshot(
                     requestContext = requestContext,
                     promptPayload = tracker.snapshotPromptPayload(
@@ -240,6 +243,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
 
     private fun buildRequestContext(): NesRequestContext? {
         val project = editor.project ?: return null
+        val tracker = tracker ?: return null
         val filepath = projectRelativeUnixPath(project, editor.document) ?: return null
         if (getSuppressionReason(project, filepath) != null) return null
         if (isDocumentTooLarge(editor.document)) return null
@@ -264,6 +268,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
     }
 
     private fun getSuppressionReason(project: com.intellij.openapi.project.Project, filepath: String): String? {
+        val tracker = tracker ?: return null
         if (settings.isAutocompleteSnoozed()) return "snoozed"
         if (settings.shouldExcludeFromAutocomplete(filepath)) return "excluded file"
         if (isDocumentTooLarge(editor.document)) return "file too large"
