@@ -14,9 +14,8 @@ import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.PsiSearchHelper
 import com.oxidecode.projectRelativeUnixPath
+import com.oxidecode.services.ClipboardTrackingService
 import java.awt.Point
-import java.awt.Toolkit
-import java.awt.datatransfer.DataFlavor
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -37,11 +36,9 @@ private const val CHUNK_SIZE_LINES = 200
 private const val CHUNK_OVERLAP_LINES = 100
 private const val MAX_CHUNKS_TO_SEND = 5
 
-// Max lines from clipboard to include in file chunks
+// Max lines from clipboard to include in retrieval chunks (mirrors original).
 private const val MAX_CLIPBOARD_LINES = 20
-// For Sweep prompt parity, avoid sampling arbitrary system clipboard text.
-// Original flow uses tracked clipboard entries (freshness-gated) rather than raw clipboard snapshots.
-private const val INCLUDE_SYSTEM_CLIPBOARD_CHUNK = false
+private const val MAX_CLIPBOARD_AGE_MS = 30_000L
 
 // Retrieval constants (mirrors Sweep retrieval limits).
 private const val MAX_RETRIEVAL_CHUNK_SIZE_LINES = 25
@@ -273,6 +270,19 @@ class NesSessionTracker {
     // Access is confined to the EDT (recorded and read from the main thread only).
     private val recentCursorPositions = ArrayDeque<CursorPositionRecord>(MAX_CURSOR_POSITIONS)
 
+    /**
+     * Mirrors original path behavior:
+     * - prefer project-relative path
+     * - fallback to absolute/virtual path for non-project files
+     * - block known URL prefixes
+     */
+    private fun toPromptPathOrNull(project: Project, absolutePath: String): String? {
+        if (absolutePath.startsWith("gitlabmr:", ignoreCase = true)) return null
+        val rel = projectRelativeUnixPath(project, absolutePath)
+        if (rel != null) return rel
+        return absolutePath
+    }
+
     fun ensureOriginalContent(filepath: String, content: String) {
         synchronized(lock) {
             originalFileContents.putIfAbsent(filepath, content)
@@ -458,7 +468,7 @@ class NesSessionTracker {
         val project = activeEditor.project ?: return "[]"
         val chunks = mutableListOf<NesFileChunk>()
         chunks += getDropdownChunks(project)
-        chunks += getClipboardChunks()
+        chunks += getClipboardChunks(project)
         chunks += getCurrentLineEntityUsages(activeEditor, project, currentFilepath)
         chunks += getDefinitionsBeforeCursor(activeEditor, project, currentFilepath)
 
@@ -595,7 +605,7 @@ class NesSessionTracker {
     ): List<NesFileChunk> {
         val fileEditorManager = FileEditorManager.getInstance(project)
         return fileEditorManager.selectedFiles.mapNotNull { virtualFile ->
-            val relPath = projectRelativeUnixPath(project, virtualFile.path) ?: virtualFile.path
+            val relPath = toPromptPathOrNull(project, virtualFile.path) ?: return@mapNotNull null
             if (relPath == currentFilepath) return@mapNotNull null
 
             val textEditor = (fileEditorManager.getSelectedEditor(virtualFile) as? TextEditor)?.editor
@@ -647,14 +657,11 @@ class NesSessionTracker {
     /**
      * Returns a clipboard chunk if the clipboard contains text, capped at [MAX_CLIPBOARD_LINES].
      */
-    private fun getClipboardChunks(): List<NesFileChunk> = runCatching {
-        if (!INCLUDE_SYSTEM_CLIPBOARD_CHUNK) return@runCatching emptyList()
-        val text = (Toolkit.getDefaultToolkit()
-            .systemClipboard
-            .getData(DataFlavor.stringFlavor) as? String)
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
+    private fun getClipboardChunks(project: Project): List<NesFileChunk> = runCatching {
+        val entry = ClipboardTrackingService.getInstance(project).getCurrentClipboardEntry()
+            ?.takeIf { it.getDurationMs() < MAX_CLIPBOARD_AGE_MS }
             ?: return@runCatching emptyList()
+        val text = entry.content.trim().takeIf { it.isNotEmpty() } ?: return@runCatching emptyList()
         val lines = text.lines()
         if (lines.size > MAX_CLIPBOARD_LINES) return@runCatching emptyList()
         listOf(NesFileChunk(filePath = "clipboard.txt", content = lines.joinToString("\n")))
@@ -690,7 +697,7 @@ class NesSessionTracker {
             val target = element.reference?.resolve() ?: element.parent?.reference?.resolve() ?: return false
             val targetFile = target.containingFile?.virtualFile
             val targetPath = targetFile?.path ?: return false
-            val relPath = projectRelativeUnixPath(project, targetPath) ?: targetPath
+            val relPath = toPromptPathOrNull(project, targetPath) ?: return false
             if (relPath == currentFilepath) return false
             val text = runCatching { target.text }.getOrNull()?.trim().orEmpty()
             if (text.isBlank()) return false
@@ -756,7 +763,7 @@ class NesSessionTracker {
                         { psi ->
                             if (local.size >= MAX_RETRIEVAL_RESULTS_PER_TERM) return@processAllFilesWithWord false
                             val vf = psi.virtualFile ?: return@processAllFilesWithWord true
-                            val rel = projectRelativeUnixPath(project, vf.path) ?: vf.path
+                            val rel = toPromptPathOrNull(project, vf.path) ?: return@processAllFilesWithWord true
                             if (rel == currentFilepath) return@processAllFilesWithWord true
                             val ext = rel.substringAfterLast('.', "")
                             if (currentExt.isNotEmpty() && ext != currentExt) return@processAllFilesWithWord true
