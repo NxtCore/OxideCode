@@ -16,7 +16,9 @@ import com.intellij.psi.search.PsiSearchHelper
 import com.oxidecode.projectRelativeUnixPath
 import com.oxidecode.services.ClipboardTrackingService
 import java.awt.Point
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -47,6 +49,12 @@ private const val MAX_RETRIEVAL_RESULTS_PER_TERM = 50
 private const val MAX_DEFINITIONS_TO_FETCH = 6
 private const val MAX_USAGES_TO_FETCH = 6
 private const val MAX_SEARCH_TIMEOUT_MS = 30L
+private const val ENTITY_USAGE_CONTEXT_LINES_ABOVE = 9
+private const val ENTITY_USAGE_CONTEXT_LINES_BELOW = 9
+private const val MAX_SEARCH_RESULTS_PER_TERM = 100
+private const val LINES_TO_SEARCH = 3
+private const val TERM_CACHE_TTL_MS = 30_000L
+private const val TERM_CACHE_MAX_SIZE = 128
 
 // How many lines to expand a visible area chunk by on each side for open-tab chunks
 private const val VISIBLE_CHUNK_EXPAND = 50
@@ -55,6 +63,17 @@ private data class ChangeSummary(
     val timestamp: Long,
     val totalChars: Int,
     val totalLines: Int,
+)
+
+private data class CachedTermOccurrences(
+    val createdAt: Long,
+    val occurrences: Map<String, List<Int>>,
+)
+
+private data class FoundOccurrence(
+    val filePath: String,
+    val lineNumbers: List<Int>,
+    val lastUpdateTime: Long,
 )
 
 private data class CursorPositionRecord(
@@ -265,6 +284,7 @@ class NesSessionTracker {
     private val originalFileContents = mutableMapOf<String, String>()
     private val lastChangeSummaries = mutableMapOf<String, ChangeSummary>()
     private val lastMultiLineSelections = mutableMapOf<String, Long>()
+    private val termCache = ConcurrentHashMap<String, CachedTermOccurrences>()
 
     // Cursor position history — used to build relevant file chunks for the prompt.
     // Access is confined to the EDT (recorded and read from the main thread only).
@@ -472,7 +492,7 @@ class NesSessionTracker {
         chunks += getCurrentLineEntityUsages(activeEditor, project, currentFilepath)
         chunks += getDefinitionsBeforeCursor(activeEditor, project, currentFilepath)
 
-        val deduped = chunks
+        val deduped = fuseAndDedupSnippets(project, chunks)
             .map { it.truncateLines(MAX_RETRIEVAL_CHUNK_SIZE_LINES) }
             .filter { it.filePath != currentFilepath && it.content.isNotBlank() }
             .distinctBy { it.filePath to it.content }
@@ -571,8 +591,9 @@ class NesSessionTracker {
 
             val lines = fileContent.lines()
             val chunkStride = CHUNK_SIZE_LINES - CHUNK_OVERLAP_LINES // 100
-            // Compute 1-based chunk start for this cursor position (1-based record.line).
-            val chunkStartLine = ((record.line - 1) / chunkStride) * chunkStride + 1
+            val textBeforeCursor = fileContent.take(record.cursorOffset.coerceAtMost(fileContent.length))
+            val cursorLine = textBeforeCursor.count { it == '\n' } + 1 // 1-based, mirrors Sweep
+            val chunkStartLine = ((cursorLine - 1) / chunkStride) * chunkStride + 1
             val chunkKey = record.filePath to chunkStartLine
             if (chunkKey in seen) continue
 
@@ -585,11 +606,19 @@ class NesSessionTracker {
             }
 
             val chunkContent = lines.subList(chunkStartLine - 1, endLine).joinToString("\n")
-            result.add(NesFileChunk(filePath = record.filePath, content = chunkContent))
+            result.add(
+                NesFileChunk(
+                    filePath = record.filePath,
+                    startLine = chunkStartLine,
+                    endLine = endLine,
+                    content = chunkContent,
+                    timestamp = record.timestamp,
+                ),
+            )
             seen.add(chunkKey)
         }
 
-        return result.takeLast(MAX_CHUNKS_TO_SEND)
+        return result.sortedBy { it.timestamp }.takeLast(MAX_CHUNKS_TO_SEND)
     }
 
     /**
@@ -617,7 +646,13 @@ class NesSessionTracker {
                     com.intellij.openapi.fileEditor.FileDocumentManager.getInstance()
                         .getDocument(virtualFile)
                 }.getOrNull() ?: return@mapNotNull null
-                NesFileChunk(filePath = relPath, content = doc.text)
+                NesFileChunk(
+                    filePath = relPath,
+                    startLine = 1,
+                    endLine = doc.lineCount,
+                    content = doc.text,
+                    timestamp = System.currentTimeMillis(),
+                )
             }
         }
     }
@@ -651,7 +686,13 @@ class NesSessionTracker {
         val content = document.charsSequence.subSequence(startOffset, endOffset).toString()
         val filePath = projectRelativeUnixPath(project, editor.document) ?: return null
 
-        return NesFileChunk(filePath = filePath, content = content)
+        return NesFileChunk(
+            filePath = filePath,
+            startLine = actualStart + 1,
+            endLine = actualEnd + 1,
+            content = content,
+            timestamp = System.currentTimeMillis(),
+        )
     }
 
     /**
@@ -664,7 +705,15 @@ class NesSessionTracker {
         val text = entry.content.trim().takeIf { it.isNotEmpty() } ?: return@runCatching emptyList()
         val lines = text.lines()
         if (lines.size > MAX_CLIPBOARD_LINES) return@runCatching emptyList()
-        listOf(NesFileChunk(filePath = "clipboard.txt", content = lines.joinToString("\n")))
+        listOf(
+            NesFileChunk(
+                filePath = "clipboard.txt",
+                startLine = 1,
+                endLine = lines.size,
+                content = lines.joinToString("\n"),
+                timestamp = System.currentTimeMillis(),
+            ),
+        )
     }.getOrElse { emptyList() }
 
     private fun getDropdownChunks(project: Project): List<NesFileChunk> = runCatching {
@@ -673,7 +722,19 @@ class NesSessionTracker {
             .take(10)
             .joinToString("\n") { it.lookupString }
             .trim()
-        if (content.isBlank()) emptyList() else listOf(NesFileChunk(filePath = "dropdown.txt", content = content))
+        if (content.isBlank()) {
+            emptyList()
+        } else {
+            listOf(
+                NesFileChunk(
+                    filePath = "dropdown.txt",
+                    startLine = 1,
+                    endLine = content.lines().size,
+                    content = content,
+                    timestamp = System.currentTimeMillis(),
+                ),
+            )
+        }
     }.getOrElse { emptyList() }
 
     private fun getDefinitionsBeforeCursor(
@@ -703,7 +764,13 @@ class NesSessionTracker {
             if (text.isBlank()) return false
             val key = "$relPath:${target.textOffset}:${text.length}"
             if (!seen.add(key)) return false
-            results += NesFileChunk(relPath, text)
+            results += NesFileChunk(
+                filePath = relPath,
+                startLine = 1,
+                endLine = text.lines().size,
+                content = text,
+                timestamp = System.currentTimeMillis(),
+            )
             return true
         }
 
@@ -723,6 +790,30 @@ class NesSessionTracker {
             while (i < lineEnd && !(chars[i].isWhitespace() || delimiters.contains(chars[i]))) i++
         }
 
+        var previousLine = line - 1
+        var nonWhitespaceLinesProcessed = 0
+        while (previousLine >= 0 && nonWhitespaceLinesProcessed < 6 && results.size < MAX_DEFINITIONS_TO_FETCH) {
+            val previousLineStart = document.getLineStartOffset(previousLine)
+            val previousLineEnd = document.getLineEndOffset(previousLine)
+
+            var processedOnLine = false
+            i = previousLineStart
+            while (i < previousLineEnd && results.size < MAX_DEFINITIONS_TO_FETCH) {
+                while (i < previousLineEnd && (chars[i].isWhitespace() || delimiters.contains(chars[i]))) i++
+                if (i >= previousLineEnd) break
+
+                processedOnLine = true
+                processAt(i)
+
+                while (i < previousLineEnd && !(chars[i].isWhitespace() || delimiters.contains(chars[i]))) i++
+            }
+
+            if (processedOnLine) {
+                nonWhitespaceLinesProcessed++
+            }
+            previousLine--
+        }
+
         results
     }.getOrElse {
         LOG.debug("Failed collecting definition chunks", it)
@@ -735,73 +826,209 @@ class NesSessionTracker {
         currentFilepath: String,
     ): List<NesFileChunk> = runCatching {
         val document = editor.document
-        val textBeforeCursor = document.charsSequence.subSequence(0, editor.caretModel.offset.coerceAtMost(document.textLength)).toString()
-        val searchText = textBeforeCursor.lines().takeLast(3).joinToString(" ")
-        val terms = searchText
+        val textBeforeCursor = document.charsSequence
+            .subSequence(0, editor.caretModel.offset.coerceAtMost(document.textLength))
+            .toString()
+        val currentLineNumber = textBeforeCursor.count { it == '\n' }
+        if (currentLineNumber >= document.lineCount) return@runCatching emptyList()
+
+        val startLineNumber = maxOf(0, currentLineNumber - LINES_TO_SEARCH + 1)
+        val endLineNumber = currentLineNumber - 1
+        val searchText = buildString {
+            for (lineNumber in startLineNumber..endLineNumber) {
+                if (lineNumber >= document.lineCount) break
+                appendLineText(document, lineNumber)
+            }
+            if (currentLineNumber < document.lineCount) {
+                appendLineText(document, currentLineNumber)
+            }
+        }
+        val lineText = textBeforeCursor.trimEnd().lines().lastOrNull()?.trim().orEmpty()
+        val currentExt = currentFilepath.substringAfterLast('.', "")
+        val candidateTerms = searchText
             .replace(Regex("[^A-Za-z0-9_]"), " ")
             .split(Regex("\\s+"))
-            .filter { it.length >= 3 && !it.all(Char::isDigit) }
-            .distinct()
-            .takeLast(MAX_RETRIEVAL_TERMS)
-        if (terms.isEmpty()) return@runCatching emptyList()
-
-        val scope = GlobalSearchScope.projectScope(project)
-        val searchHelper = PsiSearchHelper.getInstance(project)
-        val chunks = mutableListOf<NesFileChunk>()
-        val seen = mutableSetOf<String>()
-        val currentExt = currentFilepath.substringAfterLast('.', "")
-
-        for (term in terms.asReversed()) {
-            if (chunks.size >= MAX_USAGES_TO_FETCH) break
-            val started = System.currentTimeMillis()
-            val future = ReadAction
-                .nonBlocking<List<NesFileChunk>> {
-                    val local = mutableListOf<NesFileChunk>()
-                    searchHelper.processAllFilesWithWord(
-                        term,
-                        scope,
-                        { psi ->
-                            if (local.size >= MAX_RETRIEVAL_RESULTS_PER_TERM) return@processAllFilesWithWord false
-                            val vf = psi.virtualFile ?: return@processAllFilesWithWord true
-                            val rel = toPromptPathOrNull(project, vf.path) ?: return@processAllFilesWithWord true
-                            if (rel == currentFilepath) return@processAllFilesWithWord true
-                            val ext = rel.substringAfterLast('.', "")
-                            if (currentExt.isNotEmpty() && ext != currentExt) return@processAllFilesWithWord true
-                            val doc = FileDocumentManager.getInstance().getDocument(vf) ?: return@processAllFilesWithWord true
-                            val lines = doc.text.lines()
-                            for ((idx, line) in lines.withIndex()) {
-                                if (!line.contains(term)) continue
-                                val start = maxOf(1, idx + 1 - 9)
-                                val end = minOf(lines.size, idx + 1 + 9)
-                                val content = lines.subList(start - 1, end).joinToString("\n")
-                                val key = "$rel:$start:$end:${content.hashCode()}"
-                                if (seen.add(key)) {
-                                    local += NesFileChunk(rel, content)
-                                }
-                                if (local.size >= MAX_RETRIEVAL_RESULTS_PER_TERM) break
-                            }
-                            true
-                        },
-                        true,
-                    )
-                    local
-                }
-                .submit(AppExecutorHolder.executor)
-
-            val termChunks = try {
-                future.get(MAX_SEARCH_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            } catch (_: Exception) {
-                future.cancel(false)
-                emptyList()
+            .filter { term ->
+                term.length >= 3 && !term.matches(Regex("\\d+"))
             }
-            chunks += termChunks
-            if (System.currentTimeMillis() - started > MAX_SEARCH_TIMEOUT_MS * 2) break
+            .distinct()
+            .takeLast(MAX_RETRIEVAL_TERMS * 3)
+        if (candidateTerms.isEmpty()) return@runCatching emptyList()
+
+        val searchTerms = sortByTermComplexity(candidateTerms).take(MAX_RETRIEVAL_TERMS)
+        if (searchTerms.isEmpty()) return@runCatching emptyList()
+
+        val foundOccurrences = runCatching {
+            val cancelled = AtomicBoolean(false)
+            val partialResults = ConcurrentHashMap<String, MutableList<Int>>()
+            val searchFuture = AppExecutorHolder.executor.submit<MutableMap<String, MutableList<Int>>> {
+                ReadAction.computeCancellable<MutableMap<String, MutableList<Int>>, Exception> {
+                    val searchHelper = PsiSearchHelper.getInstance(project)
+                    val scope = GlobalSearchScope.projectScope(project)
+
+                    for (searchTerm in searchTerms.asReversed()) {
+                        if (cancelled.get()) break
+
+                        getCachedTermOccurrences(searchTerm)?.let { cached ->
+                            for ((filePath, lineNumbers) in cached) {
+                                partialResults.getOrPut(filePath) { mutableListOf() }.addAll(lineNumbers)
+                            }
+                            continue
+                        }
+
+                        var termResultCount = 0
+                        val termOccurrences = mutableMapOf<String, MutableList<Int>>()
+                        try {
+                            searchHelper.processAllFilesWithWord(
+                                searchTerm,
+                                scope,
+                                { psiFile ->
+                                    if (cancelled.get()) return@processAllFilesWithWord false
+
+                                    val fileVirtualFile = psiFile.virtualFile ?: return@processAllFilesWithWord true
+                                    val fileRelativePath = toPromptPathOrNull(project, fileVirtualFile.path)
+                                        ?: return@processAllFilesWithWord true
+                                    if (fileRelativePath == currentFilepath) return@processAllFilesWithWord true
+
+                                    val fileExtension = fileRelativePath.substringAfterLast('.', "")
+                                    if (currentExt.isNotEmpty() && fileExtension != currentExt) {
+                                        return@processAllFilesWithWord true
+                                    }
+
+                                    val fileDocument = FileDocumentManager.getInstance().getDocument(fileVirtualFile)
+                                        ?: return@processAllFilesWithWord true
+                                    val lines = fileDocument.text.lines()
+                                    for ((lineIndex, line) in lines.withIndex()) {
+                                        if (!line.contains(searchTerm, ignoreCase = false)) continue
+                                        termOccurrences
+                                            .getOrPut(fileRelativePath) { mutableListOf() }
+                                            .add(lineIndex + 1)
+                                        termResultCount++
+                                    }
+
+                                    termResultCount < MAX_SEARCH_RESULTS_PER_TERM
+                                },
+                                true,
+                            )
+                        } catch (_: Throwable) {
+                            cancelled.set(true)
+                            return@computeCancellable partialResults
+                        }
+
+                        val limitedOccurrences = mutableMapOf<String, MutableList<Int>>()
+                        var totalAdded = 0
+                        for ((filePath, lineNumbers) in termOccurrences) {
+                            if (totalAdded >= MAX_SEARCH_RESULTS_PER_TERM) break
+                            val remainingSlots = MAX_SEARCH_RESULTS_PER_TERM - totalAdded
+                            val linesToAdd = lineNumbers.take(remainingSlots)
+                            if (linesToAdd.isEmpty()) continue
+                            limitedOccurrences.getOrPut(filePath) { mutableListOf() }.addAll(linesToAdd)
+                            totalAdded += linesToAdd.size
+                        }
+
+                        for ((filePath, lineNumbers) in limitedOccurrences) {
+                            partialResults.getOrPut(filePath) { mutableListOf() }.addAll(lineNumbers)
+                        }
+                        cacheTermOccurrences(searchTerm, limitedOccurrences)
+                    }
+
+                    partialResults
+                }
+            }
+
+            try {
+                searchFuture.get(MAX_SEARCH_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            } catch (_: Throwable) {
+                cancelled.set(true)
+                searchFuture.cancel(false)
+                partialResults
+            }
+        }.getOrDefault(mutableMapOf())
+
+        val sortedOccurrences = foundOccurrences
+            .map { (filePath, lineNumbers) ->
+                FoundOccurrence(
+                    filePath = filePath,
+                    lineNumbers = lineNumbers.distinct().sorted(),
+                    lastUpdateTime = getFileLastUpdateTime(project, filePath),
+                )
+            }
+            .sortedByDescending { it.lastUpdateTime }
+            .take(10)
+
+        val usageChunks = mutableListOf<NesFileChunk>()
+        val bannedLinesByFile = mutableMapOf<String, MutableSet<Int>>()
+        for (occurrence in sortedOccurrences) {
+            val fileContent = readChunkContent(project, occurrence.filePath, 1, Int.MAX_VALUE) ?: continue
+            val lines = fileContent.lines()
+            val bannedLines = bannedLinesByFile.getOrPut(occurrence.filePath) { mutableSetOf() }
+
+            for (lineNumber in occurrence.lineNumbers) {
+                if (bannedLines.contains(lineNumber)) continue
+
+                val start = maxOf(1, lineNumber - ENTITY_USAGE_CONTEXT_LINES_ABOVE)
+                val end = minOf(lines.size, lineNumber + ENTITY_USAGE_CONTEXT_LINES_BELOW)
+                val chunkContent = lines.subList(start - 1, end).joinToString("\n")
+                usageChunks += NesFileChunk(
+                    filePath = occurrence.filePath,
+                    startLine = start,
+                    endLine = end,
+                    content = chunkContent,
+                    timestamp = System.currentTimeMillis(),
+                )
+
+                for (contextLine in start..end) {
+                    bannedLines.add(contextLine)
+                }
+            }
         }
-        chunks.take(MAX_USAGES_TO_FETCH)
+
+        usageChunks
+            .sortedBy { chunk ->
+                val chunkLines = chunk.content.lines()
+                val mainLineIndex = ENTITY_USAGE_CONTEXT_LINES_ABOVE.coerceAtMost(chunkLines.size - 1)
+                val mainLine = if (chunkLines.isNotEmpty() && mainLineIndex < chunkLines.size) {
+                    chunkLines[mainLineIndex].trim()
+                } else {
+                    chunk.content.trim()
+                }
+                levenshteinDistance(lineText, mainLine)
+            }
+            .take(MAX_USAGES_TO_FETCH)
     }.getOrElse {
         LOG.debug("Failed collecting usage chunks", it)
         emptyList()
     }
+
+    private fun getCachedTermOccurrences(term: String): Map<String, List<Int>>? {
+        val cached = termCache[term] ?: return null
+        if (System.currentTimeMillis() - cached.createdAt > TERM_CACHE_TTL_MS) {
+            termCache.remove(term)
+            return null
+        }
+        return cached.occurrences
+    }
+
+    private fun cacheTermOccurrences(term: String, occurrences: Map<String, List<Int>>) {
+        if (occurrences.isEmpty()) return
+        if (termCache.size >= TERM_CACHE_MAX_SIZE) {
+            val oldestKey = termCache.entries.minByOrNull { it.value.createdAt }?.key
+            if (oldestKey != null) {
+                termCache.remove(oldestKey)
+            }
+        }
+        termCache[term] = CachedTermOccurrences(
+            createdAt = System.currentTimeMillis(),
+            occurrences = occurrences.mapValues { (_, lineNumbers) -> lineNumbers.toList() },
+        )
+    }
+
+    private fun sortByTermComplexity(terms: List<String>): List<String> =
+        terms.sortedByDescending { term ->
+            val underscoreCount = term.count { it == '_' }.toDouble()
+            val pascalCaseCount = if (term.all { it.isUpperCase() || !it.isLetter() }) 0.0 else term.count { it.isUpperCase() }.toDouble()
+            maxOf(underscoreCount, pascalCaseCount) * 5 + term.length
+        }
 
     private fun reconstructBeforeContent(delta: EditDelta): String {
         val start = delta.startOffset.coerceIn(0, delta.fileContent.length)
@@ -948,8 +1175,129 @@ private object AppExecutorHolder {
     val executor = com.intellij.util.concurrency.AppExecutorUtil.getAppExecutorService()
 }
 
+private fun fuseAndDedupSnippets(project: Project, snippets: List<NesFileChunk>): List<NesFileChunk> {
+    if (snippets.isEmpty()) return emptyList()
+
+    val result = mutableListOf<NesFileChunk>()
+    snippetsLoop@ for (snippet in snippets) {
+        for (index in result.indices) {
+            val existing = result[index]
+            val overlaps =
+                existing.filePath == snippet.filePath &&
+                    (
+                        (snippet.endLine >= existing.endLine && existing.endLine >= snippet.startLine) ||
+                            (snippet.endLine >= existing.startLine && existing.startLine >= snippet.startLine)
+                    )
+            if (!overlaps) continue
+
+            val mergedStartLine = minOf(existing.startLine, snippet.startLine)
+            val mergedEndLine = maxOf(existing.endLine, snippet.endLine)
+            val mergedContent = readChunkContent(project, existing.filePath, mergedStartLine, mergedEndLine)
+                ?: if (existing.startLine <= snippet.startLine) {
+                    existing.content + "\n" + snippet.content
+                } else {
+                    snippet.content + "\n" + existing.content
+                }
+
+            result[index] = existing.copy(
+                startLine = mergedStartLine,
+                endLine = mergedEndLine,
+                content = mergedContent,
+                timestamp = maxOf(existing.timestamp, snippet.timestamp),
+            )
+            continue@snippetsLoop
+        }
+
+        result.add(snippet)
+    }
+
+    return result
+}
+
+private fun readChunkContent(project: Project, path: String, startLine: Int, endLine: Int): String? {
+    val text = when {
+        path == "clipboard.txt" || path == "dropdown.txt" -> return null
+        else -> runCatching {
+            val fileEditorManager = FileEditorManager.getInstance(project)
+            val openDoc = fileEditorManager.allEditors
+                .mapNotNull { it.file }
+                .find { vf ->
+                    val rel = projectRelativeUnixPath(project, vf.path)
+                    rel == path || vf.path == path
+                }
+                ?.let { FileDocumentManager.getInstance().getDocument(it)?.text }
+            if (openDoc != null) {
+                openDoc
+            } else {
+                val basePath = project.basePath ?: return null
+                val absolutePath = java.io.File(basePath, path).canonicalPath
+                val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(absolutePath)
+                    ?: com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(path)
+                    ?: return null
+                FileDocumentManager.getInstance().getDocument(vf)?.text
+            }
+        }.getOrNull()
+    } ?: return null
+
+    val lines = text.lines()
+    if (lines.isEmpty()) return ""
+    val startIndex = maxOf(0, startLine - 1)
+    val endIndex = minOf(lines.size - 1, endLine - 1)
+    if (startIndex > endIndex) return ""
+    return lines.subList(startIndex, endIndex + 1).joinToString("\n")
+}
+
+private fun appendLineText(document: com.intellij.openapi.editor.Document, lineNumber: Int, builder: StringBuilder) {
+    val lineStartOffset = document.getLineStartOffset(lineNumber)
+    val lineEndOffset = document.getLineEndOffset(lineNumber)
+    val lineText = document.getText(com.intellij.openapi.util.TextRange(lineStartOffset, lineEndOffset)).trim()
+    if (lineText.isNotEmpty()) {
+        if (builder.isNotEmpty()) builder.append(" ")
+        builder.append(lineText)
+    }
+}
+
+private fun StringBuilder.appendLineText(document: com.intellij.openapi.editor.Document, lineNumber: Int) {
+    appendLineText(document, lineNumber, this)
+}
+
+private fun getFileLastUpdateTime(project: Project, filePath: String): Long = runCatching {
+    val resolvedPath = if (filePath.startsWith("/")) filePath else "${project.basePath}/$filePath"
+    com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(resolvedPath)?.timeStamp ?: 0L
+}.getOrDefault(0L)
+
+private fun levenshteinDistance(left: String, right: String): Int {
+    val leftLength = left.length
+    val rightLength = right.length
+    if (leftLength.toLong() * rightLength.toLong() > 100_000) {
+        return maxOf(leftLength, rightLength)
+    }
+
+    val dp = Array(leftLength + 1) { IntArray(rightLength + 1) }
+    for (i in 0..leftLength) dp[i][0] = i
+    for (j in 0..rightLength) dp[0][j] = j
+
+    for (i in 1..leftLength) {
+        for (j in 1..rightLength) {
+            val cost = if (left[i - 1] == right[j - 1]) 0 else 1
+            dp[i][j] = minOf(
+                minOf(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
+                dp[i - 1][j - 1] + cost,
+            )
+        }
+    }
+    return dp[leftLength][rightLength]
+}
+
 private fun NesFileChunk.truncateLines(maxLines: Int): NesFileChunk {
     if (maxLines <= 0) return this
     val lines = content.lines()
-    return if (lines.size <= maxLines) this else copy(content = lines.take(maxLines).joinToString("\n"))
+    return if (lines.size <= maxLines) {
+        this
+    } else {
+        copy(
+            endLine = minOf(endLine, startLine + maxLines),
+            content = lines.take((minOf(endLine, startLine + maxLines) - startLine + 1).coerceAtLeast(1)).joinToString("\n"),
+        )
+    }
 }

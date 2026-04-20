@@ -455,5 +455,8 @@ data class EditDelta(
 @Serializable
 data class NesFileChunk(
     val filePath: String,
+    val startLine: Int = 1,
+    val endLine: Int = 1,
     val content: String,
+    val timestamp: Long = System.currentTimeMillis(),
 )

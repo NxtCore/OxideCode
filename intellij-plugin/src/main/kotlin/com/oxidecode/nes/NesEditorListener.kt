@@ -23,6 +23,8 @@ import com.oxidecode.autocomplete.isTextTooLarge
 import com.oxidecode.detectLanguageId
 import com.oxidecode.projectRelativeUnixPath
 import com.oxidecode.settings.OxideCodeSettings
+import java.awt.event.FocusEvent
+import java.awt.event.FocusListener
 import java.awt.KeyboardFocusManager
 import java.util.WeakHashMap
 import javax.swing.SwingUtilities
@@ -40,26 +42,49 @@ class NesEditorListener : EditorFactoryListener {
     private val listeners = WeakHashMap<Editor, DocumentListener>()
     private val caretListeners = WeakHashMap<Editor, CaretListener>()
     private val selectionListeners = WeakHashMap<Editor, SelectionListener>()
+    private val focusListeners = WeakHashMap<Editor, FocusListener>()
+    private var currentEditorWithListeners: Editor? = null
 
     init {
-        // EditorFactoryListener only receives editors created after registration.
-        // Attach to already-open editors so edits in pre-existing tabs are tracked.
-        EditorFactory.getInstance().allEditors.forEach { attachEditor(it) }
+        // Mirror Sweep startup behavior: register focus listeners on existing editors,
+        // but only attach heavy document/caret listeners to the active editor.
+        EditorFactory.getInstance().allEditors.forEach { registerEditor(it) }
     }
 
     override fun editorCreated(event: EditorFactoryEvent) {
-        attachEditor(event.editor)
+        registerEditor(event.editor)
     }
 
-    // test comment show
+    //another test comment
 
-    private fun attachEditor(editor: Editor) {
+    private fun registerEditor(editor: Editor) {
         if (editor.editorKind != EditorKind.MAIN_EDITOR) return
-        if (listeners.containsKey(editor)) return
+        if (focusListeners.containsKey(editor)) return
         val project = editor.project ?: return
         val tracker = project.service<NesSessionTracker>()
         projectRelativeUnixPath(editor.project, editor.document)?.let { tracker.ensureOriginalContent(it, editor.document.text) }
 
+        val focusListener = object : FocusListener {
+            override fun focusGained(e: FocusEvent?) {
+                attachEditor(editor)
+            }
+
+            override fun focusLost(e: FocusEvent?) = Unit
+        }
+        editor.contentComponent.addFocusListener(focusListener)
+        focusListeners[editor] = focusListener
+
+        if (editor.contentComponent.isFocusOwner) {
+            attachEditor(editor)
+        }
+    }
+
+    private fun attachEditor(editor: Editor) {
+        if (editor.editorKind != EditorKind.MAIN_EDITOR) return
+        if (currentEditorWithListeners === editor) return
+        detachCurrentEditor()
+
+        currentEditorWithListeners = editor
         val docListener = NesDocumentListener(editor)
         editor.document.addDocumentListener(docListener)
         listeners[editor] = docListener
@@ -96,8 +121,8 @@ class NesEditorListener : EditorFactoryListener {
         selectionListeners[editor] = selectionListener
     }
 
-    override fun editorReleased(event: EditorFactoryEvent) {
-        val editor = event.editor
+    private fun detachCurrentEditor() {
+        val editor = currentEditorWithListeners ?: return
         listeners.remove(editor)?.let { listener ->
             editor.document.removeDocumentListener(listener)
         }
@@ -106,6 +131,17 @@ class NesEditorListener : EditorFactoryListener {
         }
         selectionListeners.remove(editor)?.let { listener ->
             editor.selectionModel.removeSelectionListener(listener)
+        }
+        currentEditorWithListeners = null
+    }
+
+    override fun editorReleased(event: EditorFactoryEvent) {
+        val editor = event.editor
+        if (currentEditorWithListeners === editor) {
+            detachCurrentEditor()
+        }
+        focusListeners.remove(editor)?.let { listener ->
+            editor.contentComponent.removeFocusListener(listener)
         }
     }
 }

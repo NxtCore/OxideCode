@@ -1048,6 +1048,10 @@ impl SplitlinesKeepTerminator for str {
 #[serde(rename_all = "camelCase")]
 pub struct FileChunk {
     pub file_path: String,
+    #[serde(default = "default_start_line")]
+    pub start_line: i32,
+    #[serde(default = "default_start_line")]
+    pub end_line: i32,
     pub content: String,
 }
 
@@ -1055,6 +1059,10 @@ impl FileChunk {
     pub fn to_string_repr(&self) -> String {
         format!("{}{}\n{}\n", sweep::FILE_SEP, self.file_path, self.content)
     }
+}
+
+fn default_start_line() -> i32 {
+    1
 }
 
 fn estimate_token_count(text: &str) -> usize {
