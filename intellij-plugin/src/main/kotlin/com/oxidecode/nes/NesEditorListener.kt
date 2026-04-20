@@ -6,6 +6,7 @@ import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.EditorKind
 import com.intellij.openapi.editor.event.CaretEvent
 import com.intellij.openapi.editor.event.CaretListener
@@ -40,9 +41,21 @@ class NesEditorListener : EditorFactoryListener {
     private val caretListeners = WeakHashMap<Editor, CaretListener>()
     private val selectionListeners = WeakHashMap<Editor, SelectionListener>()
 
+    init {
+        // EditorFactoryListener only receives editors created after registration.
+        // Attach to already-open editors so edits in pre-existing tabs are tracked.
+        EditorFactory.getInstance().allEditors.forEach { attachEditor(it) }
+    }
+
     override fun editorCreated(event: EditorFactoryEvent) {
-        val editor = event.editor
+        attachEditor(event.editor)
+    }
+
+    // test comment show
+
+    private fun attachEditor(editor: Editor) {
         if (editor.editorKind != EditorKind.MAIN_EDITOR) return
+        if (listeners.containsKey(editor)) return
         val project = editor.project ?: return
         val tracker = project.service<NesSessionTracker>()
         projectRelativeUnixPath(editor.project, editor.document)?.let { tracker.ensureOriginalContent(it, editor.document.text) }

@@ -17,7 +17,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        intellijIdea("2025.3")
+        intellijIdea("2025.1")
     }
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
@@ -30,7 +30,7 @@ kotlin {
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "253"
+            sinceBuild = "241"
             untilBuild = "261.*"
         }
     }
