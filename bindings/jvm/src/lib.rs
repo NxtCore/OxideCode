@@ -221,6 +221,8 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
     cursor_filepath: JString,
     cursor_line: jint,
     cursor_col: jint,
+    cursor_offset_utf16: jint,
+    limit_context_chunks: jboolean,
     file_content: JString,
     language: JString,
     completion_endpoint: JString,
@@ -293,9 +295,11 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         filepath = %cursor_filepath,
         line = cursor_line,
         col = cursor_col,
+        cursor_offset_utf16 = cursor_offset_utf16,
         language = %language,
         prompt_style = ?prompt_style,
         endpoint = ?endpoint,
+        limit_context_chunks = (limit_context_chunks != 0),
         "Java_com_oxidecode_CoreBridge_predictNextEdit called"
     );
 
@@ -324,6 +328,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         &cursor_filepath,
         cursor_line as u32,
         cursor_col as u32,
+        cursor_offset_utf16 as u32,
         &file_content,
         &language,
         original_file_content_opt,
@@ -341,6 +346,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         },
         Some(&high_res_deltas),
         changes_above_cursor != 0,
+        limit_context_chunks != 0,
         cancel,
     ));
 

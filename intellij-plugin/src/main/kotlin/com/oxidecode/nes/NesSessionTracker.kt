@@ -528,7 +528,11 @@ class NesSessionTracker {
                     .takeLast(MAX_HIGH_RES_HISTORY_LEN)
                     .map { it.formattedDiff }
                     .joinToString("\n"),
-                history.asReversed().any { it.filepath == currentFilepath && it.startLine <= currentCursorLine },
+                if (com.oxidecode.settings.OxideCodeSettings.instance.nesChangesAboveCursorEnabled) {
+                    history.asReversed().any { it.filepath == currentFilepath && it.startLine <= currentCursorLine }
+                } else {
+                    false
+                },
             )
         }
 

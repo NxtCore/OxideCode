@@ -1027,11 +1027,27 @@ impl SplitlinesKeepTerminator for str {
     fn splitlines_keep_terminator(&self) -> Vec<&str> {
         let mut lines = Vec::new();
         let mut start = 0;
-        for (i, b) in self.bytes().enumerate() {
-            if b == b'\n' {
-                lines.push(&self[start..=i]);
-                start = i + 1;
+        let bytes = self.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i] == b'\n' {
+                let end = i + 1;
+                lines.push(&self[start..end]);
+                start = end;
+                i = end;
+                continue;
             }
+            if bytes[i] == b'\r' {
+                let mut end = i + 1;
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                    end = i + 2;
+                }
+                lines.push(&self[start..end]);
+                start = end;
+                i = end;
+                continue;
+            }
+            i += 1;
         }
         if start < self.len() {
             lines.push(&self[start..]);
@@ -1166,7 +1182,83 @@ fn apply_recent_changes_to_section(
 
 // ─── compute_prefill ─────────────────────────────────────────────────────────
 
-fn compute_prefill(code_block: &str, relative_cursor: usize, changes_above_cursor: bool) -> String {
+fn count_line_breaks(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    let mut count = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\n' {
+            count += 1;
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'\r' {
+            count += 1;
+            if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    count
+}
+
+fn split_prefill_for_forced_prefix(prefill: &str) -> (String, String) {
+    if prefill.is_empty() {
+        return (String::new(), String::new());
+    }
+
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    enum CharClass {
+        Whitespace,
+        Word,
+        Other,
+    }
+
+    fn classify(ch: char) -> CharClass {
+        if ch.is_whitespace() {
+            CharClass::Whitespace
+        } else if ch.is_alphanumeric() || ch == '_' {
+            CharClass::Word
+        } else {
+            CharClass::Other
+        }
+    }
+
+    let mut start: usize;
+    let mut chars = prefill.char_indices().rev();
+    let Some((last_idx, last_ch)) = chars.next() else {
+        return (String::new(), String::new());
+    };
+    let last_class = classify(last_ch);
+    start = last_idx;
+
+    for (idx, ch) in chars {
+        if classify(ch) != last_class {
+            break;
+        }
+        start = idx;
+    }
+
+    (prefill[..start].to_string(), prefill[start..].to_string())
+}
+
+fn compute_prefill(
+    code_block: &str,
+    relative_cursor: usize,
+    changes_above_cursor: bool,
+    force_ghost_text: bool,
+) -> (String, String) {
+    let is_at_eof = relative_cursor == code_block.len();
+    if force_ghost_text && !is_at_eof {
+        let pre_cursor = &code_block[..relative_cursor];
+        let (prefill, forced_prefix) = split_prefill_for_forced_prefix(pre_cursor);
+        return (prefill, forced_prefix);
+    }
+
     if changes_above_cursor {
         let pre_cursor = &code_block[..relative_cursor];
         let lines: Vec<&str> = pre_cursor.splitlines_keep_terminator();
@@ -1181,10 +1273,9 @@ fn compute_prefill(code_block: &str, relative_cursor: usize, changes_above_curso
             .copied()
             .collect();
         let leading_newlines = after_split.len() - after_split.trim_start_matches('\n').len();
-        format!("{}{}", before_split, "\n".repeat(leading_newlines))
+        (format!("{}{}", before_split, "\n".repeat(leading_newlines)), String::new())
     } else {
-        // Python: `else: prefill = ""; forced_prefix = ""`
-        String::new()
+        (String::new(), String::new())
     }
 }
 
@@ -1239,6 +1330,7 @@ pub struct SweepPromptContext {
     /// Text prepended to the model's output (everything before the cursor up
     /// to — and including — the last newline in that region).
     pub prefill: String,
+    pub forced_prefix: String,
     /// 1-indexed start line used in the prompt `original/` / `current/` /
     /// `updated/` section headers.
     pub cursor_line_start: u32,
@@ -1326,10 +1418,7 @@ fn get_lines_around_cursor(file_contents: &str, cursor_position: usize) -> Strin
     }
 
     // 0-indexed line number for cursor_position.
-    let cursor_line = file_contents[..cursor_position.min(file_contents.len())]
-        .bytes()
-        .filter(|&b| b == b'\n')
-        .count();
+    let cursor_line = count_line_breaks(&file_contents[..cursor_position.min(file_contents.len())]);
 
     // Nearest stride-aligned chunk index.
     let ideal_start = cursor_line as i64 - (CHUNK_SIZE / 2) as i64;
@@ -1389,6 +1478,7 @@ pub fn build_sweep_prompt(
     retrieval_chunks: Option<&[FileChunk]>,
     file_chunks: Option<&[FileChunk]>,
     changes_above_cursor: bool,
+    force_ghost_text: bool,
     num_lines_before: Option<usize>,
     num_lines_after: Option<usize>,
 ) -> (String, SweepPromptContext) {
@@ -1405,6 +1495,7 @@ pub fn build_sweep_prompt(
                 block_start_offset: 0,
                 block_start_line: 0,
                 prefill: String::new(),
+                forced_prefix: String::new(),
                 cursor_line_start: 0,
                 cursor_line_end: 0,
                 relative_cursor_offset: 0,
@@ -1467,7 +1558,8 @@ pub fn build_sweep_prompt(
     );
 
     // 7. Compute prefill.
-    let prefill = compute_prefill(&code_block, relative_cursor_offset, changes_above_cursor);
+    let (prefill, forced_prefix) =
+        compute_prefill(&code_block, relative_cursor_offset, changes_above_cursor, force_ghost_text);
 
     // 8. Build the broad context (lines around cursor, full file or 300-line chunk).
     let has_retrieval = retrieval_chunks.map_or(false, |r| !r.is_empty());
@@ -1522,10 +1614,7 @@ pub fn build_sweep_prompt(
     //   relative_cursor_line = number of newlines before the cursor in the block (0-indexed)
     //   start_line = relative_cursor_line + 1
     //   end_line   = relative_cursor_line + len(code_block.splitlines()) + 1
-    let relative_cursor_line = code_block[..relative_cursor_offset]
-        .bytes()
-        .filter(|&b| b == b'\n')
-        .count();
+    let relative_cursor_line = count_line_breaks(&code_block[..relative_cursor_offset]);
     let start_line = (relative_cursor_line as u32) + 1;
     let end_line = (relative_cursor_line + code_block.lines().count() + 1) as u32;
 
@@ -1625,6 +1714,7 @@ pub fn build_sweep_prompt(
         block_start_offset,
         block_start_line: block_start as u32,
         prefill,
+        forced_prefix,
         cursor_line_start: start_line,
         cursor_line_end: end_line,
         relative_cursor_offset,
@@ -1644,7 +1734,12 @@ pub fn parse_sweep_response(raw: &str, ctx: &SweepPromptContext) -> Option<Strin
         .trim_end_matches(sweep::ENDOFTEXT)
         .trim_end_matches(sweep::FILE_SEP);
 
-    let updated = format!("{}{}", ctx.prefill, content);
+    let stitched = if !ctx.forced_prefix.is_empty() && !content.starts_with(&ctx.forced_prefix) {
+        format!("{}{}", ctx.forced_prefix, content)
+    } else {
+        content.to_string()
+    };
+    let updated = format!("{}{}", ctx.prefill, stitched);
 
     if updated.trim().is_empty() {
         return None;

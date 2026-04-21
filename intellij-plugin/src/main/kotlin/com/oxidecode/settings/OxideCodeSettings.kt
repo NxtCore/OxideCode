@@ -22,6 +22,7 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
         var nesEnabled: Boolean = true,
         var nesDebounceMs: Int = 300,
         var nesPromptStyle: String = "sweep",
+        var nesChangesAboveCursorEnabled: Boolean = false,
         /** "completions" → /v1/completions (default); "chat_completions" → /v1/chat/completions */
         var completionEndpoint: String = "completions",
         /** When non-empty, NES predictions are logged as JSONL to this directory. */
@@ -70,6 +71,10 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings.State> {
     var nesPromptStyle: String
         get() = state.nesPromptStyle
         set(v) { state = state.copy(nesPromptStyle = v) }
+
+    var nesChangesAboveCursorEnabled: Boolean
+        get() = state.nesChangesAboveCursorEnabled
+        set(v) { state = state.copy(nesChangesAboveCursorEnabled = v) }
 
     var completionEndpoint: String
         get() = state.completionEndpoint

@@ -240,6 +240,8 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
                     cursorFilepath = requestContext.filepath,
                     cursorLine = requestContext.cursorLine,
                     cursorCol = requestContext.cursorCol,
+                    cursorOffsetUtf16 = requestContext.cursorOffsetUtf16,
+                    limitContextChunks = isLikelyLocalBaseUrl(settings.baseUrl),
                     fileContent = requestContext.content,
                     language = requestContext.language,
                     completionEndpoint = settings.completionEndpoint,
@@ -310,6 +312,7 @@ private class NesDocumentListener(private val editor: Editor) : DocumentListener
             filepath = filepath,
             cursorLine = cursor.line,
             cursorCol = cursor.column,
+            cursorOffsetUtf16 = editor.caretModel.offset,
             content = content,
             originalContent = originalContent,
             language = detectLanguageId(project, editor.document),
@@ -356,6 +359,7 @@ private data class NesRequestContext(
     val filepath: String,
     val cursorLine: Int,
     val cursorCol: Int,
+    val cursorOffsetUtf16: Int,
     val content: String,
     val originalContent: String,
     val language: String,
@@ -365,3 +369,13 @@ private data class NesPredictionSnapshot(
     val requestContext: NesRequestContext,
     val promptPayload: NesPromptPayload,
 )
+
+private fun isLikelyLocalBaseUrl(baseUrl: String): Boolean {
+    val normalized = baseUrl.trim().lowercase()
+    return normalized.startsWith("http://localhost") ||
+        normalized.startsWith("https://localhost") ||
+        normalized.startsWith("http://127.0.0.1") ||
+        normalized.startsWith("https://127.0.0.1") ||
+        normalized.startsWith("http://0.0.0.0") ||
+        normalized.startsWith("https://0.0.0.0")
+}

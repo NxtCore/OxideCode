@@ -18,6 +18,7 @@ class OxideCodeConfigurable : Configurable {
     private val nesEnabledBox = JCheckBox("Enable Next Edit Suggestions")
     private val nesDebounceMsField = JSpinner(SpinnerNumberModel(300, 50, 5000, 50))
     private val nesPromptStyleBox = JComboBox(arrayOf("generic", "zeta1", "zeta2", "sweep"))
+    private val nesChangesAboveCursorEnabledBox = JCheckBox("Enable changes-above-cursor mode")
     private val completionEndpointBox = JComboBox(arrayOf("completions", "chat_completions"))
     private val calibrationLogDirField = JTextField(40)
 
@@ -43,6 +44,7 @@ class OxideCodeConfigurable : Configurable {
             .addComponent(nesEnabledBox)
             .addLabeledComponent("NES debounce (ms):", nesDebounceMsField)
             .addLabeledComponent("NES prompt style:", nesPromptStyleBox)
+            .addComponent(nesChangesAboveCursorEnabledBox)
             .addLabeledComponent("Calibration log dir (empty = off):", calibrationLogDirField)
             .addComponentFillVertically(JPanel(), 0)
             .panel
@@ -57,6 +59,7 @@ class OxideCodeConfigurable : Configurable {
                 nesEnabledBox.isSelected != settings.nesEnabled ||
                 (nesDebounceMsField.value as Int) != settings.nesDebounceMs ||
                 nesPromptStyleBox.selectedItem as String != settings.nesPromptStyle ||
+                nesChangesAboveCursorEnabledBox.isSelected != settings.nesChangesAboveCursorEnabled ||
                 completionEndpointBox.selectedItem as String != settings.completionEndpoint ||
                 calibrationLogDirField.text.trim() != settings.calibrationLogDir
 
@@ -70,6 +73,7 @@ class OxideCodeConfigurable : Configurable {
         settings.nesEnabled = nesEnabledBox.isSelected
         settings.nesDebounceMs = nesDebounceMsField.value as Int
         settings.nesPromptStyle = nesPromptStyleBox.selectedItem as String
+        settings.nesChangesAboveCursorEnabled = nesChangesAboveCursorEnabledBox.isSelected
         settings.completionEndpoint = completionEndpointBox.selectedItem as String
         settings.calibrationLogDir = calibrationLogDirField.text.trim()
     }
@@ -83,6 +87,7 @@ class OxideCodeConfigurable : Configurable {
         nesEnabledBox.isSelected = settings.nesEnabled
         nesDebounceMsField.value = settings.nesDebounceMs
         nesPromptStyleBox.selectedItem = settings.nesPromptStyle
+        nesChangesAboveCursorEnabledBox.isSelected = settings.nesChangesAboveCursorEnabled
         completionEndpointBox.selectedItem = settings.completionEndpoint
         calibrationLogDirField.text = settings.calibrationLogDir
     }

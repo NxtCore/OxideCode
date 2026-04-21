@@ -81,6 +81,8 @@ class CoreBridge {
         cursorFilepath: String,
         cursorLine: Int,
         cursorCol: Int,
+        cursorOffsetUtf16: Int,
+        limitContextChunks: Boolean,
         fileContent: String,
         language: String,
         completionEndpoint: String,
