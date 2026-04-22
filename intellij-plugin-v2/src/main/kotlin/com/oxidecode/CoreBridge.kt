@@ -24,6 +24,9 @@ class CoreBridge {
 
     external fun fetchNextEditAutocomplete(
         baseUrl: String,
+        apiKey: String,
+        model: String,
+        nesPromptStyle: String,
         requestJson: String,
         requestId: String,
     ): String

@@ -1129,7 +1129,7 @@ dependencies = [
  "jni",
  "once_cell",
  "oxidecode-core",
- "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",

@@ -80,11 +80,15 @@ class AutocompleteIpResolverService(
         try {
             val requestJson = encodeString(request, NextEditAutocompleteRequest.serializer())
             val bridge = service<CoreBridge>()
+            val settings = OxideCodeSettings.getInstance()
             val requestId = bridge.newRequestId("next-edit")
             val responseJson =
                 withContext(Dispatchers.IO) {
                     bridge.fetchNextEditAutocomplete(
                         getBaseUrl(),
+                        settings.anthropicApiKey,
+                        settings.model,
+                        settings.nesPromptStyle,
                         requestJson,
                         requestId,
                     )

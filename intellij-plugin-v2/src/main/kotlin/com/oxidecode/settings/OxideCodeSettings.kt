@@ -31,6 +31,9 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings> {
         private const val DEFAULT_NEXT_EDIT_PREDICTION_ON = true
         private const val DEFAULT_ACCEPT_WORD_ON_RIGHT_ARROW = true
         private const val DEFAULT_ANTHROPIC_API_KEY = ""
+        private const val DEFAULT_MODEL = "sweep-next-edit-v2-7B"
+        private const val DEFAULT_NES_PROMPT_STYLE = "sweep"
+        private const val DEFAULT_DEBUG_LOG_DIR = ""
         private const val DEFAULT_PLAY_NOTIFICATION_ON_STREAM_END = false
         private const val DEFAULT_DEVELOPER_MODE_ON = false
 
@@ -98,6 +101,24 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings> {
             field = value
         }
 
+    var model: String = DEFAULT_MODEL
+        get() = field.trim()
+        set(value) {
+            field = value
+        }
+
+    var nesPromptStyle: String = DEFAULT_NES_PROMPT_STYLE
+        get() = field.trim()
+        set(value) {
+            field = value
+        }
+
+    var debugLogDir: String = DEFAULT_DEBUG_LOG_DIR
+        get() = field.trim()
+        set(value) {
+            field = value
+        }
+
     var playNotificationOnStreamEnd: Boolean =
         DEFAULT_PLAY_NOTIFICATION_ON_STREAM_END
         set(value) {
@@ -118,7 +139,7 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings> {
     var autocompleteDebounceMs: Long =
         DEFAULT_AUTOCOMPLETE_DEBOUNCE_MS
         set(value) {
-            val clamped = value.coerceIn(10L, 1000L)
+            val clamped = value.coerceIn(20L, 5000L)
             field = clamped
             // We intentionally do not fire notifySettingsChanged here to avoid
             // excessive message bus chatter while the user drags the slider.

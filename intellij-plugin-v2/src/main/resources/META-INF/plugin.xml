@@ -24,6 +24,12 @@
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="com.oxidecode.settings.OxideCodeMetaData"/>
         <applicationService serviceImplementation="com.oxidecode.settings.OxideCodeSettings"/>
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.oxidecode.settings.OxideCodeConfigurable"
+                id="com.oxidecode.settings"
+                displayName="OxideCode"/>
+        <postStartupActivity implementation="com.oxidecode.startup.OxideCodeStartupActivity"/>
     </extensions>
 
     <actions>

@@ -778,9 +778,9 @@ class OxideCodeConfig(
                     state.autocompleteDebounceMs != -1L -> state.autocompleteDebounceMs
                     // Fall back to older debounceThresholdMs if it was meaningfully set (>200 as per prior logic)
                     state.debounceThresholdMs > 200L -> state.debounceThresholdMs
-                    else -> 10L
+                    else -> 20L
                 }
-            settings.autocompleteDebounceMs = migrated.coerceIn(10L, 1000L)
+            settings.autocompleteDebounceMs = migrated.coerceIn(20L, 5000L)
         }
 
         return settings.autocompleteDebounceMs
@@ -788,7 +788,7 @@ class OxideCodeConfig(
 
     fun updateDebounceThresholdMs(thresholdMs: Long) {
         // Write to IDE-wide storage
-        OxideCodeSettings.getInstance().autocompleteDebounceMs = thresholdMs.coerceIn(10L, 1000L)
+        OxideCodeSettings.getInstance().autocompleteDebounceMs = thresholdMs.coerceIn(20L, 5000L)
     }
 
     fun getDisabledMcpServers(): Set<String> = state.disabledMcpServers
