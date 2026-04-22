@@ -4,20 +4,20 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.PermanentInstallationID
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
+import com.oxidecode.CoreBridge
 import com.oxidecode.autocomplete.edit.NextEditAutocompleteRequest
 import com.oxidecode.autocomplete.edit.NextEditAutocompleteResponse
 import com.oxidecode.settings.OxideCodeConfig
 import com.oxidecode.settings.OxideCodeSettings
-import com.oxidecode.utils.CompressionUtils
+import com.oxidecode.utils.defaultJson
 import com.oxidecode.utils.encodeString
 import com.oxidecode.utils.getCurrentSweepPluginVersion
 import com.oxidecode.utils.getDebugInfo
-import com.oxidecode.utils.defaultJson
 import com.oxidecode.utils.raiseForStatus
-import com.oxidecode.utils.streamJson
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -78,57 +78,22 @@ class AutocompleteIpResolverService(
     @RequiresBackgroundThread
     suspend fun fetchNextEditAutocomplete(request: NextEditAutocompleteRequest): NextEditAutocompleteResponse? =
         try {
-            val postData = encodeString(request, NextEditAutocompleteRequest.serializer())
-            val postDataBytes = postData.toByteArray(Charsets.UTF_8)
-
-            // Try to compress the request data
-            val (finalData, useCompression) =
-                if (CompressionUtils.isBrotliAvailable()) {
-                    val compressedData = CompressionUtils.compress(postDataBytes, CompressionUtils.CompressionType.BROTLI)
-                    if (compressedData.size < postDataBytes.size) {
-                        val compressionRatio = CompressionUtils.calculateCompressionRatio(postDataBytes.size, compressedData.size)
-                        logger.info(
-                            "Request compressed: ${postDataBytes.size} -> ${compressedData.size} bytes (${String.format(
-                                "%.1f",
-                                compressionRatio,
-                            )}% reduction)",
-                        )
-                        Pair(compressedData, true)
-                    } else {
-                        logger.info("Compression not beneficial, sending uncompressed")
-                        Pair(postDataBytes, false)
-                    }
-                } else {
-                    logger.info("Brotli not available, sending uncompressed")
-                    Pair(postDataBytes, false)
+            val requestJson = encodeString(request, NextEditAutocompleteRequest.serializer())
+            val bridge = service<CoreBridge>()
+            val requestId = bridge.newRequestId("next-edit")
+            val responseJson =
+                withContext(Dispatchers.IO) {
+                    bridge.fetchNextEditAutocomplete(
+                        getBaseUrl(),
+                        requestJson,
+                        requestId,
+                    )
                 }
-
-            val httpRequestBuilder =
-                HttpRequest
-                    .newBuilder()
-                    .uri(URI.create("${getBaseUrl()}/backend/next_edit_autocomplete"))
-                    .timeout(Duration.ofMillis(READ_TIMEOUT_MS))
-                    .header("Content-Type", "application/json")
-
-            if (useCompression) {
-                httpRequestBuilder.header("Content-Encoding", CompressionUtils.CompressionType.BROTLI.encoding)
+            if (responseJson.isBlank()) {
+                null
+            } else {
+                defaultJson.decodeFromString<NextEditAutocompleteResponse>(responseJson)
             }
-
-            val httpRequest = httpRequestBuilder.POST(HttpRequest.BodyPublishers.ofByteArray(finalData)).build()
-
-            val response =
-                httpClient
-                    .sendAsync(httpRequest, HttpResponse.BodyHandlers.ofInputStream())
-                    .await()
-                    .raiseForStatus()
-
-            var result: NextEditAutocompleteResponse? = null
-
-            response.streamJson<NextEditAutocompleteResponse>().collect {
-                result = it
-            }
-
-            result
         } catch (e: Exception) {
             logger.warn("Error fetching next edit autocomplete: ${e.message}")
             throw e

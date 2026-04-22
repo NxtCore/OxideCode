@@ -2,9 +2,11 @@ use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jint, jstring};
 use jni::JNIEnv;
 use once_cell::sync::Lazy;
+use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -19,6 +21,12 @@ use oxidecode_core::{
 
 static ACTIVE_REQUESTS: Lazy<Mutex<HashMap<String, CancellationToken>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .timeout(Duration::from_millis(10_000))
+        .build()
+        .expect("http client")
+});
 
 fn register_request(request_id: &str, cancel: CancellationToken) {
     ACTIVE_REQUESTS
@@ -71,6 +79,32 @@ fn parse_prompt_style(s: &str) -> NesPromptStyle {
         "sweep" => NesPromptStyle::Sweep,
         _ => NesPromptStyle::Generic,
     }
+}
+
+fn parse_last_json_object(body: &str) -> Option<String> {
+    let mut last_json: Option<String> = None;
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+            last_json = Some(trimmed.to_string());
+        }
+    }
+
+    if last_json.is_some() {
+        return last_json;
+    }
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+        return Some(trimmed.to_string());
+    }
+    None
 }
 
 /// Initialise the tracing subscriber once for JNI. Call from the Java side early
@@ -197,6 +231,55 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_getCompletion(
 
     let out = result.unwrap_or_default();
     env.new_string(out).unwrap().into_raw()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
+    mut env: JNIEnv,
+    _class: JClass,
+    base_url: JString,
+    request_json: JString,
+    request_id: JString,
+) -> jstring {
+    let base_url: String = env.get_string(&base_url).unwrap().into();
+    let request_json: String = env.get_string(&request_json).unwrap().into();
+    let request_id: String = env.get_string(&request_id).unwrap().into();
+
+    let url = format!(
+        "{}/backend/next_edit_autocomplete",
+        base_url.trim_end_matches('/')
+    );
+    let cancel = CancellationToken::new();
+    let _request_guard = RequestGuard::new(request_id, cancel.clone());
+
+    let response_json = runtime().block_on(async move {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                warn!("fetchNextEditAutocomplete cancelled");
+                None
+            }
+            response = async move {
+                let response = HTTP_CLIENT
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .body(request_json)
+                    .send()
+                    .await
+                    .ok()?;
+                if !response.status().is_success() {
+                    warn!(status = %response.status(), "fetchNextEditAutocomplete returned non-success status");
+                    return None;
+                }
+
+                let body = response.text().await.ok()?;
+                parse_last_json_object(&body)
+            } => response,
+        }
+    });
+
+    env.new_string(response_json.unwrap_or_default())
+        .unwrap()
+        .into_raw()
 }
 
 // ─── NES ─────────────────────────────────────────────────────────────────────
