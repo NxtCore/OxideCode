@@ -1,0 +1,52 @@
+<idea-plugin>
+    <id>com.oxidecode</id>
+    <name>OxideCode</name>
+    <vendor>OxideCode</vendor>
+    <description>AI autocomplete and Next Edit Suggestions powered by local and cloud models.</description>
+    <change-notes><![CDATA[
+        <h3>Version 0.2.4</h3>
+        <ul>
+            <li>Initial release with AI autocomplete</li>
+            <li>Next Edit Suggestions (NES) support</li>
+            <li>Support for local and cloud models</li>
+        </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.lang</depends>
+
+    <application-components>
+        <component>
+            <implementation-class>com.oxidecode.CoreBridge</implementation-class>
+        </component>
+    </application-components>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="com.oxidecode.settings.OxideCodeMetaData"/>
+        <applicationService serviceImplementation="com.oxidecode.settings.OxideCodeSettings"/>
+    </extensions>
+
+    <actions>
+        <action id="com.oxidecode.autocomplete.edit.AcceptEditCompletionAction"
+                class="com.oxidecode.autocomplete.edit.AcceptEditCompletionAction"
+                text="Accept Autocomplete Suggestion"
+                description="Accept Autocomplete Suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="TAB"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="TAB"/>
+        </action>
+        <action id="com.oxidecode.autocomplete.edit.RejectEditCompletionAction"
+                class="com.oxidecode.autocomplete.edit.RejectEditCompletionAction"
+                text="Reject Autocomplete Suggestion"
+                description="Reject Autocomplete Suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="ESCAPE"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="ESCAPE"/>
+        </action>
+        <action id="com.oxidecode.autocomplete.edit.ClearAutocompleteRejectionCacheAction"
+                class="com.oxidecode.autocomplete.edit.ClearAutocompleteRejectionCacheAction"
+                text="Show Last Rejected Suggestion"
+                description="Undo cancellation and force a new autocomplete suggestion">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt shift BACK_SPACE"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt shift BACK_SPACE"/>
+        </action>
+    </actions>
+</idea-plugin>
