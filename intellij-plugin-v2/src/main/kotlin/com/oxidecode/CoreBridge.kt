@@ -28,6 +28,7 @@ class CoreBridge {
         model: String,
         nesPromptStyle: String,
         requestJson: String,
+        debugLogDir: String,
         requestId: String,
     ): String
 

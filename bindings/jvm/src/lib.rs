@@ -431,6 +431,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
     model: JString,
     nes_prompt_style: JString,
     request_json: JString,
+    debug_log_dir: JString,
     request_id: JString,
 ) -> jstring {
     let base_url: String = env.get_string(&base_url).unwrap().into();
@@ -438,6 +439,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
     let model: String = env.get_string(&model).unwrap().into();
     let nes_prompt_style: String = env.get_string(&nes_prompt_style).unwrap().into();
     let request_json: String = env.get_string(&request_json).unwrap().into();
+    let debug_log_dir: String = env.get_string(&debug_log_dir).unwrap().into();
     let request_id: String = env.get_string(&request_id).unwrap().into();
 
     let started = Instant::now();
@@ -463,6 +465,11 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
     } else {
         Some(api_key)
     };
+    let calibration_log_dir_opt = if debug_log_dir.is_empty() {
+        None
+    } else {
+        Some(debug_log_dir)
+    };
 
     info!(
         base_url = %base_url,
@@ -484,7 +491,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
     let nes_cfg = NesConfig {
         prompt_style,
         completion_endpoint: CompletionEndpoint::Completions,
-        calibration_log_dir: None,
+        calibration_log_dir: calibration_log_dir_opt,
         ..NesConfig::default()
     };
     let engine = NesEngine::new(provider, nes_cfg);

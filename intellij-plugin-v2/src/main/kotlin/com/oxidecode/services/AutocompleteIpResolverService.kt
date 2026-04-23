@@ -90,6 +90,7 @@ class AutocompleteIpResolverService(
                         settings.model,
                         settings.nesPromptStyle,
                         requestJson,
+                        settings.debugLogDir,
                         requestId,
                     )
                 }
