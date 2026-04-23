@@ -213,10 +213,10 @@ jobs:
       - name: Place native libs into resources
         run: |
           mkdir -p intellij-plugin-v2/src/main/resources/native
-          cp temp-artifacts/oxidecode_jvm.linux.so intellij-plugin-v2/src/main/resources/native/
-          cp temp-artifacts/oxidecode_jvm.darwin-arm64.dylib intellij-plugin-v2/src/main/resources/native/
-          cp temp-artifacts/oxidecode_jvm.darwin-x64.dylib intellij-plugin-v2/src/main/resources/native/
-          cp temp-artifacts/oxidecode_jvm.win32.dll intellij-plugin-v2/src/main/resources/native/
+          cp temp-artifacts/oxidecode_jvm.linux.so intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_x64.so
+          cp temp-artifacts/oxidecode_jvm.darwin-arm64.dylib intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_arm64.dylib
+          cp temp-artifacts/oxidecode_jvm.darwin-x64.dylib intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_x64.dylib
+          cp temp-artifacts/oxidecode_jvm.win32.dll intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_x64.dll
 
       - name: Setup Java
         uses: actions/setup-java@v4
