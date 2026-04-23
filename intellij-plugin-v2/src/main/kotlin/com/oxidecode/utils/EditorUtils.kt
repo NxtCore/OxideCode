@@ -544,36 +544,6 @@ fun openFileInEditor(
     }
 }
 
-fun focusSweepTerminal(project: Project) {
-    ApplicationManager.getApplication().invokeLater {
-        // Add project disposal guard to prevent ContainerDisposedException
-        if (project.isDisposed) {
-            return@invokeLater
-        }
-
-        val toolWindowManager = ToolWindowManager.getInstance(project)
-        val terminalToolWindow = toolWindowManager.getToolWindow("Terminal")
-
-        terminalToolWindow?.let { toolWindow ->
-            // Show the terminal tool window if it's not visible
-            if (!toolWindow.isVisible) {
-                toolWindow.show()
-            }
-
-            // Activate the tool window to bring it to focus
-            toolWindow.activate(null)
-
-            // Find and select the "Sweep Terminal" tab
-            val contentManager = toolWindow.contentManager
-            val sweepTerminalContent = contentManager.findContent("Sweep Terminal")
-
-            sweepTerminalContent?.let { content ->
-                contentManager.setSelectedContent(content)
-            }
-        }
-    }
-}
-
 /**
  * Strips surrounding quotes from a path string.
  * Handles both single and double quotes.

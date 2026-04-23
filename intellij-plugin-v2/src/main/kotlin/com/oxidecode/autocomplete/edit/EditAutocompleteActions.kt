@@ -54,7 +54,7 @@ abstract class EditCompletionActionBase : AnAction() {
  * intercept the new keystroke at the low level for reliable autocomplete acceptance.
  *
  * Note: Any keystroke can be used. When multiple actions are bound to the same key,
- * SweepActionPromoter ensures this action takes priority when autocomplete is shown.
+ * ActionPromoter ensures this action takes priority when autocomplete is shown.
  */
 class AcceptEditCompletionAction : EditCompletionActionBase() {
     companion object {
@@ -79,7 +79,7 @@ class AcceptEditCompletionAction : EditCompletionActionBase() {
  * intercept the new keystroke at the low level for reliable autocomplete rejection.
  *
  * Note: Any keystroke can be used. When multiple actions are bound to the same key,
- * SweepActionPromoter ensures this action takes priority when autocomplete is shown.
+ * ActionPromoter ensures this action takes priority when autocomplete is shown.
  */
 class RejectEditCompletionAction : EditCompletionActionBase() {
     companion object {

@@ -45,7 +45,7 @@ fun findLongestCommonSubstring(
 
 /**
  * Calculates a modified edit distance where arbitrary length deletions count as distance 1.
- * This helps match queries with "jumps" like "sweepmessageaction" → "sweepcommitmessageaction".
+ * This helps match queries with "jumps" like "messageaction" → "commitmessageaction".
  *
  * @param query The search query
  * @param target The target string to match against

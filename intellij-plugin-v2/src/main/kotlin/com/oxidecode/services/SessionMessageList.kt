@@ -17,13 +17,12 @@ import kotlin.concurrent.read
 import kotlin.concurrent.write
 
 /**
- * Per-session message store for Sweep chat.
+ * Per-session message store for chat.
  *
  * This is a non-service class that holds the messages, conversation state, and metadata
- * for a single chat session. Each SweepSession owns one instance of this class.
+ * for a single chat session. Each Session owns one instance of this class.
  *
  * Thread-safety: All operations are guarded by a ReentrantReadWriteLock.
- * See the MessageList documentation in sweep_md_rules for usage patterns.
  *
  * @param project The IntelliJ project (used for file operations, not for service lookup)
  * @param initialConversationId Optional initial conversation ID (defaults to a new UUID)
@@ -45,7 +44,7 @@ class SessionMessageList(
     // Example: 12.345 cents -> 12345 milli-cents
     private val _threadCostMilliCents = AtomicLong(0L)
 
-    // Optional callback when conversationId changes (used by SweepSession to sync state)
+    // Optional callback when conversationId changes (used by Session to sync state)
     var onConversationIdChanged: ((String) -> Unit)? = null
 
     override fun dispose() {

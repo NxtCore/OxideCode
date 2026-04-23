@@ -104,7 +104,7 @@ class RoundedButton(
             !myEnabled -> background
             isPulsing -> {
                 val alpha = ((Math.sin(pulsePhase.toDouble()) + 1.0) / 2f) * 0.2f + 0.2f
-                val blue = OxideCodeColors.sweepRulesAccentColor
+                val blue = OxideCodeColors.oxideCodeRulesAccentColor
                 val base = originalBackground ?: background
                 Color(
                     (base.red + (blue.red - base.red) * alpha).toInt().coerceIn(0, 255),

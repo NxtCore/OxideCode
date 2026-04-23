@@ -2242,7 +2242,7 @@ class RecentEditsTracker(
             NotificationDeduplicationService.getInstance(project).showNotificationWithDeduplicationAndErrorReporting(
                 title = "Autocomplete Error",
                 content = "Failed to fetch next edit autocomplete: ${e.message}\n\nStack trace:\n$stackTrace",
-                notificationGroup = "Sweep Autocomplete",
+                notificationGroup = "OxideCode Notifications",
                 type = NotificationType.ERROR,
                 exception = e,
                 errorContext = "Autocomplete fetch failed: ${e.message}",

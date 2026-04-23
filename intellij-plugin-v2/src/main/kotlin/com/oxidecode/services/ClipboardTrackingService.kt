@@ -72,7 +72,7 @@ class ClipboardTrackingService(
                 }
             }
 
-        // Use SweepProjectService as parent disposable per plugin guidelines
+        // Use OxideCodeProjectService as parent disposable per plugin guidelines
         contentChangedListener?.let { listener ->
             manager.addContentChangedListener(listener, OxideCodeProjectService.getInstance(project))
         }

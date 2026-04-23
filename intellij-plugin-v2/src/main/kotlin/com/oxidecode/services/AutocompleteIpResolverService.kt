@@ -15,14 +15,7 @@ import com.oxidecode.settings.OxideCodeConfig
 import com.oxidecode.settings.OxideCodeSettings
 import com.oxidecode.utils.defaultJson
 import com.oxidecode.utils.encodeString
-import com.oxidecode.utils.getCurrentSweepPluginVersion
-import com.oxidecode.utils.getDebugInfo
-import com.oxidecode.utils.raiseForStatus
 import kotlinx.coroutines.*
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.coroutines.future.await
 import java.net.InetAddress
 import java.net.URI
 import java.net.http.HttpClient
@@ -32,7 +25,7 @@ import java.time.Duration
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Service that periodically resolves the IP address of autocomplete.sweep.dev
+ * Service that periodically resolves the IP address of the given hostname
  * to keep DNS cache warm while using HTTPS with the domain name directly.
  */
 @Service(Service.Level.PROJECT)
@@ -44,7 +37,7 @@ class AutocompleteIpResolverService(
 
         fun getInstance(project: Project): AutocompleteIpResolverService = project.getService(AutocompleteIpResolverService::class.java)
 
-        private const val HOSTNAME = "autocomplete.sweep.dev"
+        private const val HOSTNAME = "localhost"
         private const val RESOLUTION_INTERVAL_MS = 15_000L
         private const val HEALTH_CHECK_INTERVAL_MS = 25_000L // Just under 30 seconds
         private const val READ_TIMEOUT_MS = 10_000L

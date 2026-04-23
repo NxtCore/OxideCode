@@ -26,16 +26,13 @@ data class BYOKProviderConfig(
 )
 class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings> {
     companion object {
-        private const val DEFAULT_SWEEP_URL = ""
-        private const val DEFAULT_BETA_FLAG_ON = false
+        private const val DEFAULT_URL = ""
         private const val DEFAULT_NEXT_EDIT_PREDICTION_ON = true
         private const val DEFAULT_ACCEPT_WORD_ON_RIGHT_ARROW = true
         private const val DEFAULT_ANTHROPIC_API_KEY = ""
         private const val DEFAULT_MODEL = "sweep-next-edit-v2-7B"
         private const val DEFAULT_NES_PROMPT_STYLE = "sweep"
         private const val DEFAULT_DEBUG_LOG_DIR = ""
-        private const val DEFAULT_PLAY_NOTIFICATION_ON_STREAM_END = false
-        private const val DEFAULT_DEVELOPER_MODE_ON = false
 
         // -1L means "unset" so project-level values can migrate in
         private const val DEFAULT_AUTOCOMPLETE_DEBOUNCE_MS = -1L
@@ -52,12 +49,12 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings> {
 
         companion object {
             @JvmField
-            val TOPIC = Topic.create("Sweep settings changed", SettingsChangedNotifier::class.java)
+            val TOPIC = Topic.create("OxideCode settings changed", SettingsChangedNotifier::class.java)
         }
     }
 
 
-    var baseUrl: String = DEFAULT_SWEEP_URL
+    var baseUrl: String = DEFAULT_URL
         get() = field.trim().trimEnd('/')
         set(value) {
             if (value != field) {
@@ -66,11 +63,6 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings> {
             } else {
                 field = value
             }
-        }
-
-    var betaFlagOn: Boolean = DEFAULT_BETA_FLAG_ON
-        set(value) {
-            field = value
         }
 
     var nextEditPredictionFlagOn: Boolean =
@@ -119,22 +111,11 @@ class OxideCodeSettings : PersistentStateComponent<OxideCodeSettings> {
             field = value
         }
 
-    var playNotificationOnStreamEnd: Boolean =
-        DEFAULT_PLAY_NOTIFICATION_ON_STREAM_END
-        set(value) {
-            field = value
-        }
-
-    var developerModeOn: Boolean = DEFAULT_DEVELOPER_MODE_ON
-        set(value) {
-            field = value
-        }
-
     /**
      * Autocomplete debounce delay in milliseconds.
      * This is stored at the application level and applies to all projects.
      * A value of -1 indicates "unset" and allows a one-time migration from any existing
-     * project-level setting in SweepConfig when first accessed.
+     * project-level setting in OxideCodeConfig when first accessed.
      */
     var autocompleteDebounceMs: Long =
         DEFAULT_AUTOCOMPLETE_DEBOUNCE_MS

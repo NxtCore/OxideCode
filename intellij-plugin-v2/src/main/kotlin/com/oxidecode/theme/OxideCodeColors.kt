@@ -258,11 +258,11 @@ object OxideCodeColors {
     // Code block border color - static as it doesn't change with theme
     val codeBlockBorderColor: Color = ColorUtil.fromHex("#48494b")
 
-    // Sweep rules accent color - static as it's a brand color
-    val sweepRulesAccentColor: JBColor = JBColor(Color(88, 157, 246), Color(104, 159, 244))
+    // OxideCode rules accent color - static as it's a brand color
+    val oxideCodeRulesAccentColor: JBColor = JBColor(Color(88, 157, 246), Color(104, 159, 244))
 
     // Dropdown panel background based on current background
-    val sweepDropdownPanelBackground: JBColor
+    val oxideCodeDropdownPanelBackground: JBColor
         get() =
             JBColor(
                 Gray._255,

@@ -354,16 +354,6 @@ data class FileModification(
 )
 
 @Serializable
-data class FeedbackSubmission(
-    val feedback: String,
-    val messages: List<Message> = listOf(),
-    val lastMessage: Message?,
-    val snippets: List<Snippet> = listOf(),
-    val codeReplacements: List<CodeReplacement>,
-    val metadata: Map<String, String?> = mapOf(), // sweep_rules, last_diff, etc.
-) : BaseRequest()
-
-@Serializable
 data class Skill(
     val name: String,
     val description: String,
@@ -386,7 +376,7 @@ data class ChatRequest(
     val current_open_file: String? = null,
     val current_cursor_offset: Int? = null,
     val telemetry_source: String = "jetbrains",
-    val sweep_rules: String = "",
+    val rules: String = "",
     val last_diff: String = "",
     val model_to_use: String? = null,
     val privacy_mode_enabled: Boolean = false,
@@ -475,7 +465,7 @@ data class AutocompleteResponse(
  * Used for storing snippets of code.
  * Span and codeSnippet are not null only for code snippets are null for full files
  * Special case: for code snippets with no source information the name will be
- * SweepCustomGeneralTextSnippet-<source>
+ * CustomGeneralTextSnippet-<source>
  * Where the source can be something like TerminalOutput or ConsoleOutput or CopyPaste etc.
  * The span will be null and the codeSnippet will store the actual contents the relativepath will be to a tmp file or ""
  */
@@ -598,7 +588,7 @@ data class GenerateCommandRequest(
 ) : BaseRequest()
 
 @Serializable
-data class SweepErrorRequest(
+data class ErrorRequest(
     val error: HashMap<String, String>,
 ) : BaseRequest()
 

@@ -758,7 +758,7 @@ open class RoundedTextArea(
                 .getDataContext(this)
                 .getData(PlatformDataKeys.PROJECT)
         if (project != null) {
-            textArea.withSweepFont(project)
+            textArea.withOxideCodeFont(project)
             textArea.repaint()
         }
     }

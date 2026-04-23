@@ -5,7 +5,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.oxidecode.theme.OxideCodeColors
-import com.oxidecode.utils.withSweepFont
+import com.oxidecode.utils.withOxideCodeFont
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -34,7 +34,7 @@ class ToggleButton(
 
     init {
         isOpaque = false
-        withSweepFont(project, scale = 1f)
+        withOxideCodeFont(project, scale = 1f)
         border = JBUI.Borders.empty(4, 6)
         foreground = activeColor
         updateDisplayText()

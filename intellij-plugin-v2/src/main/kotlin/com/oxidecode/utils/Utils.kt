@@ -112,17 +112,17 @@ fun isIDEDarkMode(): Boolean {
     }
 }
 
-fun getCurrentSweepPluginVersion(): String? {
-    val sweepId = OxideCodeBundle.message(OxideCodeConstants.PLUGIN_ID_KEY)
-    return PluginManagerCore.getPlugin(PluginId.getId(sweepId))?.version
+fun getCurrentPluginVersion(): String? {
+    val pluginId = OxideCodeBundle.message(OxideCodeConstants.PLUGIN_ID_KEY)
+    return PluginManagerCore.getPlugin(PluginId.getId(pluginId))?.version
 }
 
 fun getDebugInfo(): String =
     try {
         val application = ApplicationInfo.getInstance()
-        val sweepVersion = getCurrentSweepPluginVersion() ?: "unknown"
+        val version = getCurrentPluginVersion() ?: "unknown"
         val osName = System.getProperty("os.name")
-        "${application.fullApplicationName} (${application.build}) - OS: $osName - Sweep v$sweepVersion"
+        "${application.fullApplicationName} (${application.build}) - OS: $osName - v$version"
     } catch (e: Exception) {
         logger.warn("Error getting IDE info: ${e.message}")
         "Unknown IDE"
@@ -506,7 +506,7 @@ fun showNotification(
     project: Project,
     title: String,
     body: String,
-    notificationGroup: String = "Sweep AI Notifications",
+    notificationGroup: String = "OxideCode Notifications",
     notificationType: NotificationType = NotificationType.INFORMATION,
     icon: Icon? = null,
     action: NotificationAction? = null,
@@ -549,11 +549,6 @@ fun isIdeVersion20242(): Boolean =
     } catch (e: Exception) {
         false
     }
-
-fun getMcpConfigPath(): String {
-    val configDir = PathManager.getConfigPath()
-    return "$configDir/sweep_mcp.json"
-}
 
 fun versionSafeWriteAction(callback: () -> Unit) {
     if (isIdeVersion20242()) {

@@ -384,7 +384,7 @@ class PopupEditorComponent(
                         font = font.deriveFont(Font.PLAIN, 11f)
                         foreground = JBColor.GRAY
                         border = JBUI.Borders.empty()
-                        icon = OxideCodeIcons.SweepIcon
+                        icon = OxideCodeIcons.OxideCodeLogo
                         horizontalTextPosition = SwingConstants.LEFT
                         iconTextGap = JBUI.scale(4)
                     }.also { add(it, BorderLayout.SOUTH) }

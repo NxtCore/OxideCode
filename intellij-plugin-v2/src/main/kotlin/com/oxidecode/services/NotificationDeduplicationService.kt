@@ -86,35 +86,35 @@ class NotificationDeduplicationService(
                 // HTTP 401 - Unauthorized
                 message.contains("HTTP 401") -> {
                     "Authentication Error" to
-                        "Your token appears to be invalid or expired. Please check your Sweep settings and update your token."
+                        "Your token appears to be invalid or expired. Please check your settings and update your token."
                 }
 
                 // HTTP 403 - Forbidden
                 message.contains("HTTP 403") -> {
                     "Authentication Error" to
-                        "Your credentials for Sweep are misconfigured. Please check your Sweep settings and try again."
+                        "Your credentials for are misconfigured. Please check your settings and try again."
                 }
 
                 // HTTP 404 - Not Found
                 message.contains("HTTP 404") -> {
-                    "Service Unavailable" to "Sweep service endpoint not found. This may be a temporary issue. Please try again later."
+                    "Service Unavailable" to "Service endpoint not found. This may be a temporary issue. Please try again later."
                 }
 
                 // HTTP 407 - Proxy Authentication Required
                 message.contains("HTTP 407") -> {
                     "Proxy Authentication Required" to
-                        "Sweep's autocomplete cannot connect because your network proxy requires authentication. " +
-                        "Please configure your proxy credentials in Settings > Appearance & Behavior > System Settings > HTTP Proxy or email support@sweep.dev."
+                        "OxideCode cannot connect because your network proxy requires authentication. " +
+                        "Please configure your proxy credentials in Settings > Appearance & Behavior > System Settings > HTTP Proxy"
                 }
 
                 // HTTP 429 - Too Many Requests
                 message.contains("HTTP 429") -> {
-                    "Rate Limited" to "Too many requests sent to Sweep's autocomplete. Please wait a moment before trying again."
+                    "Rate Limited" to "Too many requests sent. Please wait a moment before trying again."
                 }
 
                 // HTTP 500, 502, 503, 504 - Server Errors
                 message.contains(Regex("HTTP (500|502|503|504)")) -> {
-                    "Service Error" to "Sweep's autocomplete are temporarily unavailable. Please try again in a few minutes."
+                    "Service Error" to "Autocomplete are temporarily unavailable. Please try again in a few minutes."
                 }
 
                 // Network/Connection errors
@@ -138,18 +138,17 @@ class NotificationDeduplicationService(
                 // Access Control errors (Java Security Manager blocking network access)
                 exceptionType == "AccessControlException" || message.contains("access denied") -> {
                     "Permission Error" to
-                        "Access to Sweep's autocomplete services was blocked by Java Security Manager. " +
+                        "Access to the autocomplete services was blocked by Java Security Manager. " +
                         "Please check: " +
                         "(1) Help > Edit Custom VM Options for any '-Djava.security.manager' flags, " +
                         "(2) Corporate security or antivirus software that may be restricting Java network access, " +
-                        "(3) Custom java.policy files in your JDK installation. " +
-                        "For more help, contact support@sweep.dev"
+                        "(3) Custom java.policy files in your JDK installation. "
                 }
 
                 // Default case - use original message but make it more user-friendly
                 else -> {
                     originalTitle to
-                        "An error occurred while using Sweep's autocomplete. Please try again or check your settings if the problem persists."
+                        "An error occurred while using OxideCode. Please try again or check your settings if the problem persists."
                 }
             }
         }

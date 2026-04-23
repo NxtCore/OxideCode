@@ -7,7 +7,7 @@ import java.time.Instant
 
 @State(
     name = "FileUsageManager",
-    storages = [Storage("SweepFileUsage.xml")],
+    storages = [Storage("OxideCodeFileUsage.xml")],
 )
 @Service(Service.Level.PROJECT)
 class FileUsageManager : PersistentStateComponent<FileUsageManager> {

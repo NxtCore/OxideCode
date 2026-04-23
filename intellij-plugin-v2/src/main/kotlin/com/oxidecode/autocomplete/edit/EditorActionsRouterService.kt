@@ -44,7 +44,7 @@ class EditorActionsRouterService : Disposable {
     // and forwarded/applied, causing an extra tab after acceptance.
     //
     // On the Gateway CLIENT we add an IdeEventQueue dispatcher that consumes the raw TAB key event
-    // when a Sweep suggestion is visible.
+    // when a OxideCode suggestion is visible.
     private val gatewayClientTabDispatcher: IdeEventQueue.EventDispatcher =
         IdeEventQueue.EventDispatcher dispatcher@{ e: AWTEvent ->
             if (OxideCodeConstants.GATEWAY_MODE != OxideCodeConstants.GatewayMode.CLIENT) return@dispatcher false

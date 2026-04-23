@@ -227,8 +227,8 @@ class EditorThemeManager(
                     child.icon?.let { currentIcon ->
                         // Cache original icon if not already cached
                         val originalIcon =
-                            child.getClientProperty("sweep.originalIcon") as? javax.swing.Icon
-                                ?: currentIcon.also { child.putClientProperty("sweep.originalIcon", it) }
+                            child.getClientProperty("oxidecode.originalIcon") as? javax.swing.Icon
+                                ?: currentIcon.also { child.putClientProperty("oxidecode.originalIcon", it) }
 
                         // Apply darkening/brightening to the original icon, not the current one
                         child.icon =
@@ -256,7 +256,7 @@ class EditorThemeManager(
                 child.foreground = UIManager.getColor("Panel.foreground")
                 if (child is RoundedButton) {
                     // Restore the original icon instead of brightening the current one
-                    val originalIcon = child.getClientProperty("sweep.originalIcon") as? javax.swing.Icon
+                    val originalIcon = child.getClientProperty("oxidecode.originalIcon") as? javax.swing.Icon
                     if (originalIcon != null) {
                         child.icon = originalIcon
                     }

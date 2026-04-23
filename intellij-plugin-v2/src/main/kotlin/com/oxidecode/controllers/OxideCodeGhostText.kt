@@ -45,7 +45,7 @@ class OxideCodeGhostText(
 
     private val alarm: Alarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, this)
     private val entityExtractor = CodeEntityExtractor.getInstance(project)
-    private val SWEEP_GHOST_TEXT_DELAY = 100L
+    private val GHOST_TEXT_DELAY = 100L
 
     // Keep track of attached listeners
     private val attachedListeners = mutableMapOf<RoundedTextArea, ListenerContainer>()
@@ -418,7 +418,7 @@ class OxideCodeGhostText(
                     }
                 }
             }
-        }, SWEEP_GHOST_TEXT_DELAY)
+        }, GHOST_TEXT_DELAY)
     }
 
     override fun dispose() {

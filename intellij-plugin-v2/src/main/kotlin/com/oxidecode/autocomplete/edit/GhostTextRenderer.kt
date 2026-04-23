@@ -140,7 +140,7 @@ class GhostTextRenderer(
         val marginBetweenTextAndHint = 16
         val pillHorizontalPadding = 4
         val spaceBetweenTabAndAccept = 2
-        val icon = OxideCodeIcons.SweepIcon
+        val icon = OxideCodeIcons.OxideCodeLogo
         val iconGap = JBUI.scale(4)
 
         marginBetweenTextAndHint +
@@ -964,7 +964,7 @@ class GhostTextRenderer(
         val marginBetweenTextAndHint = 16
         val iconGap = JBUI.scale(4)
         val spaceBetweenTabAndAccept = 2
-        val icon = OxideCodeIcons.SweepIcon
+        val icon = OxideCodeIcons.OxideCodeLogo
 
         val baselineY = targetRegion.y + inlay.editor.ascent + additionalYOffset
         val iconY =

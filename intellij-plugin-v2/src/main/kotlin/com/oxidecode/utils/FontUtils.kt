@@ -6,7 +6,7 @@ import com.oxidecode.settings.OxideCodeConfig
 import java.awt.Font
 import javax.swing.JComponent
 
-fun JComponent.withSweepFont(
+fun JComponent.withOxideCodeFont(
     project: Project, // now required
     scale: Float = 1f,
     bold: Boolean = false,

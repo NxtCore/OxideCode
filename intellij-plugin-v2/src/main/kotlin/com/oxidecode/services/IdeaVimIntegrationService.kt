@@ -24,8 +24,8 @@ class IdeaVimIntegrationService(
 ) {
     companion object {
         private const val IDEAVIM_PLUGIN_ID = "IdeaVIM"
-        private const val SWEEP_TAB_MAPPING = "map <Tab> :action com.oxidecode.autocomplete.edit.AcceptEditCompletionAction<CR>"
-        private const val SWEEP_MAPPING_COMMENT = "\" Sweep AI Tab completion mapping"
+        private const val TAB_MAPPING = "map <Tab> :action com.oxidecode.autocomplete.edit.AcceptEditCompletionAction<CR>"
+        private const val MAPPING_COMMENT = "\" OxideCode Tab completion mapping"
 
         fun getInstance(project: Project): IdeaVimIntegrationService = project.getService(IdeaVimIntegrationService::class.java)
     }
@@ -85,16 +85,16 @@ class IdeaVimIntegrationService(
     }
 
     /**
-     * Checks if the Sweep Tab mapping already exists in .ideavimrc
+     * Checks if the OxideCode Tab mapping already exists in .ideavimrc
      */
-    private fun hasSweepTabMapping(ideavimrcFile: File): Boolean {
+    private fun hasOxideCodeTabMapping(ideavimrcFile: File): Boolean {
         if (!ideavimrcFile.exists()) {
             return false
         }
 
         return try {
             val content = ideavimrcFile.readText()
-            content.contains(SWEEP_TAB_MAPPING)
+            content.contains(TAB_MAPPING)
         } catch (e: Exception) {
             logger.warn("Error reading .ideavimrc file", e)
             false
@@ -102,11 +102,11 @@ class IdeaVimIntegrationService(
     }
 
     /**
-     * Adds the Sweep Tab mapping to the .ideavimrc file
+     * Adds the OxideCode Tab mapping to the .ideavimrc file
      */
-    private fun addSweepTabMapping(ideavimrcFile: File) {
+    private fun addOxideCodeTabMapping(ideavimrcFile: File) {
         try {
-            val mappingWithComment = "\n$SWEEP_MAPPING_COMMENT\n$SWEEP_TAB_MAPPING\n"
+            val mappingWithComment = "\n$MAPPING_COMMENT\n$TAB_MAPPING\n"
 
             if (ideavimrcFile.exists()) {
                 // Append to existing file
@@ -124,9 +124,9 @@ class IdeaVimIntegrationService(
                 )
             }
 
-            logger.info("Successfully added Sweep Tab mapping to .ideavimrc")
+            logger.info("Successfully added OxideCode Tab mapping to .ideavimrc")
         } catch (e: Exception) {
-            logger.warn("Error adding Sweep Tab mapping to .ideavimrc", e)
+            logger.warn("Error adding OxideCode Tab mapping to .ideavimrc", e)
         }
     }
 
@@ -138,10 +138,10 @@ class IdeaVimIntegrationService(
             val notification =
                 NotificationGroupManager
                     .getInstance()
-                    .getNotificationGroup("Sweep AI Notifications")
+                    .getNotificationGroup("OxideCode Notifications")
                     .createNotification(
                         "IdeaVim Integration Complete",
-                        "Sweep has configured your Vim settings for Tab completion. Please restart your IDE to activate the changes.",
+                        "OxideCode has configured your Vim settings for Tab completion. Please restart your IDE to activate the changes.",
                         NotificationType.INFORMATION,
                     ).addAction(
                         NotificationAction.createSimpleExpiring("Restart now") {
@@ -165,13 +165,13 @@ class IdeaVimIntegrationService(
 
             val ideavimrcFile = getIdeavimrcPath()
 
-            if (hasSweepTabMapping(ideavimrcFile)) {
-                logger.info("Sweep Tab mapping already exists in .ideavimrc")
+            if (hasOxideCodeTabMapping(ideavimrcFile)) {
+                logger.info("OxideCode Tab mapping already exists in .ideavimrc")
                 return@executeOnPooledThread
             }
 
-            logger.info("IdeaVim detected, adding Sweep Tab mapping to .ideavimrc")
-            addSweepTabMapping(ideavimrcFile)
+            logger.info("IdeaVim detected, adding OxideCode Tab mapping to .ideavimrc")
+            addOxideCodeTabMapping(ideavimrcFile)
             showRestartNotification()
         }
     }

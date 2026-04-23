@@ -1,16 +1,11 @@
 package com.oxidecode.utils
 
 import com.intellij.openapi.extensions.PluginId
-import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.JBColor
-import com.oxidecode.theme.OxideCodeColors
 import java.awt.Color
-import javax.swing.text.html.StyleSheet
 
 object OxideCodeConstants {
-    const val PLUGIN_ID = "com.oxidecode"
     const val PLUGIN_ID_KEY = "plugin.id"
-    val META_KEY = if (SystemInfo.isMac) "⌘" else "Ctrl "
 
     enum class GatewayMode {
         CLIENT,
@@ -25,303 +20,18 @@ object OxideCodeConstants {
             else -> GatewayMode.NA
         }
 
-    val IS_FRONTEND_MODE = GATEWAY_MODE == GatewayMode.CLIENT
-    val IS_BACKEND_MODE = GATEWAY_MODE == GatewayMode.HOST
-
-    val TOOLWINDOW_NAME = "Sweep AI"
-    const val NEW_CHAT = "New Chat"
     const val FILE_PLACEHOLDER = "<file_name>"
-    const val GENERAL_TEXT_SNIPPET_PREFIX = "SweepCustomGeneralTextSnippet-"
-    const val SUGGESTED_GENERAL_TEXT_SNIPPET_PREFIX = "SweepCustomGeneralTextSnippetSuggested-"
-    const val GENERAL_TEXT_SNIPPET_SEPARATOR = "_"
-    const val CURSOR = "█"
-    val CUSTOM_FILE_INFO_MAP =
-        mapOf(
-            "${GENERAL_TEXT_SNIPPET_PREFIX}TerminalOutput" to "Terminal Output",
-            "${GENERAL_TEXT_SNIPPET_PREFIX}ConsoleOutput" to "Console Output",
-            "${GENERAL_TEXT_SNIPPET_PREFIX}CopyPaste" to "Pasted Content",
-            "${GENERAL_TEXT_SNIPPET_PREFIX}CurrentChanges" to "Current Changes",
-            "${GENERAL_TEXT_SNIPPET_PREFIX}ProblemsOutput" to "Problems",
-        )
-
-    const val TOKEN_TO_CHARACTERS_RATIO = 3
-    const val MAX_USER_MESSAGE_INPUT_LENGTH = TOKEN_TO_CHARACTERS_RATIO * 20_000
-    const val MAX_SNIPPET_CONTENT_LENGTH = TOKEN_TO_CHARACTERS_RATIO * 10_000
+    const val GENERAL_TEXT_SNIPPET_PREFIX = "OxideCodeCustomGeneralTextSnippet-"
 
     const val MAX_FILE_SIZE_MB = 2.56
     const val MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024 // 2.56MB in bytes
-    const val MAX_REQUEST_SIZE_BYTES = 32 * 1024 * 1024 // 32MB
 
     val diffFiles = setOf("TabPreviewDiffVirtualFile", "Diff")
-
-    object Styles {
-        val body =
-            """
-            body {
-                color: #${OxideCodeColors.foregroundColorHex};
-                line-height: 1.4;
-                hanging-punctuation: first;
-                text-wrap: pretty;
-                word-spacing: 0.05em;
-                white-space: pre-wrap; 
-                word-break: break-all; 
-                overflow-wrap: anywhere;
-            }
-            """.trimIndent()
-
-        val message =
-            """
-            .message-label {
-                font-weight: bold;
-                margin-bottom: 4px;
-                color: #${OxideCodeColors.foregroundColorHex};
-            }
-            """.trimIndent()
-
-        val pre =
-            """
-            pre { 
-                font-family: 'JetBrains Mono', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Hiragino Sans GB', monospace;
-                background-color: #${OxideCodeColors.editorBackgroundColorHex}; 
-                padding: 8px;
-                white-space: pre-wrap;
-                width: 100%;
-                margin: 4px 2px;
-                color: #${OxideCodeColors.codeExplanationDisplayTextColor};
-            }
-            h1 pre, h2 pre { 
-                color: #${OxideCodeColors.foregroundColorHex};
-            }
-            """.trimIndent()
-
-        val darkModePre =
-            """
-            pre { 
-                font-family: 'JetBrains Mono', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Hiragino Sans GB', monospace;
-                background-color: #${OxideCodeColors.editorBackgroundColorHex}; 
-                padding: 8px;
-                white-space: pre-wrap;
-                width: 100%;
-                margin: 4px 2px;
-                color: #9b7eb6;
-            }
-            h1 pre, h2 pre { 
-                color: #a0a0a0;
-            }
-            """.trimIndent()
-
-        val list =
-            """
-            ul, ol {
-                margin: 2px 2px 4px 2px;
-                padding-left: 24px;
-            }
-            """.trimIndent()
-
-        val listItem =
-            """
-            li {
-                margin: 2px 2px;
-            }
-            """.trimIndent()
-
-        val unorderListItem =
-            """
-            ul li {
-                list-style-type: disc;
-            }
-            """.trimIndent()
-
-        val orderedListItem =
-            """
-            ol li {
-                list-style-type: decimal;
-            }
-            """.trimIndent()
-
-        val heading1 =
-            """
-            h1 {
-                font-size: 16px;
-                margin: 8px 0 4px 0;
-                font-weight: bold;
-            }
-            """.trimIndent()
-
-        val heading2 =
-            """
-            h2 {
-                font-size: 14px;
-                margin: 8px 0 4px 0;
-                font-weight: bold;
-            }
-            """.trimIndent()
-
-        val heading3 =
-            """
-            h3 {
-                font-size: 13px;
-                margin: 8px 0 4px 0;
-                font-weight: bold;
-            }
-            """.trimIndent()
-
-        val paragraph =
-            """
-            p {
-                margin: 4px 0px 8px 0px;
-            }
-            """.trimIndent()
-
-        val listParagraph =
-            """
-            li p {
-                margin: 0px 2px;
-            }
-            """.trimIndent()
-
-        val code =
-            """
-            code { 
-                font-family: 'JetBrains Mono', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Hiragino Sans GB', monospace;
-                color: #${OxideCodeColors.foregroundColorHex};
-                background-color: #${OxideCodeColors.backgroundColorHex};
-                padding: 2px 4px;
-                white-space: pre-wrap; 
-                word-break: break-all; 
-                overflow-wrap: anywhere;
-            }
-            h1 code, h2 code { 
-                color: #${OxideCodeColors.foregroundColorHex};
-                background-color: #${OxideCodeColors.backgroundColorHex};
-                padding: 2px 4px;
-                white-space: pre-wrap; 
-                word-break: break-all; 
-                overflow-wrap: anywhere;
-            }
-            """.trimIndent()
-
-        val darkModeCode =
-            """
-            code { 
-                font-family: 'JetBrains Mono', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Hiragino Sans GB', monospace;
-                color: #${OxideCodeColors.foregroundColorHex};
-                background-color: #${OxideCodeColors.backgroundColorHex};
-                padding: 2px 4px;
-                white-space: pre-wrap; 
-                word-break: break-all; 
-                overflow-wrap: anywhere;
-            }
-            h1 code, h2 code { 
-                color: #${OxideCodeColors.foregroundColorHex};
-                background-color: #${OxideCodeColors.backgroundColorHex};
-                padding: 2px 4px;
-                white-space: pre-wrap; 
-                word-break: break-all; 
-                overflow-wrap: anywhere;
-            }
-            """.trimIndent()
-
-        val bold =
-            """
-            b, strong { 
-                font-weight: 700;
-                white-space: pre-wrap; 
-                word-break: break-all; 
-                overflow-wrap: anywhere;
-            }
-            """.trimIndent()
-
-        val link =
-            """
-            a {
-                text-decoration: underline;
-                font-weight: 500;
-                white-space: pre-wrap;
-                word-break: break-all;
-                overflow-wrap: anywhere;
-            }
-            a:hover {
-                opacity: 0.8;
-                white-space: pre-wrap;
-                word-break: break-all;
-                overflow-wrap: anywhere;
-            }
-            """.trimIndent()
-
-        val table =
-            """
-            table {
-                border-collapse: collapse;
-                border-spacing: 0;
-                margin: 8px 0;
-                width: 100%;
-            }
-            th, td {
-                text-align: left;
-                border: 1px solid #${OxideCodeColors.foregroundColorHex}20;
-                padding: 6px 8px;
-            }
-            th {
-                font-weight: bold;
-            }
-            """.trimIndent()
-
-        val stylesheet =
-            StyleSheet().apply {
-                addRule(body)
-                addRule(message)
-                addRule(pre)
-                addRule(list)
-                addRule(listItem)
-                addRule(unorderListItem)
-                addRule(orderedListItem)
-                addRule(heading1)
-                addRule(heading2)
-                addRule(heading3)
-                addRule(paragraph)
-                addRule(listParagraph)
-                addRule(code)
-                addRule(bold)
-                addRule(link)
-                addRule(table)
-            }
-
-        val darkModeStyleSheet =
-            StyleSheet().apply {
-                addRule(body)
-                addRule(message)
-                addRule(darkModePre)
-                addRule(list)
-                addRule(listItem)
-                addRule(unorderListItem)
-                addRule(orderedListItem)
-                addRule(heading1)
-                addRule(heading2)
-                addRule(heading3)
-                addRule(paragraph)
-                addRule(listParagraph)
-                addRule(darkModeCode)
-                addRule(bold)
-                addRule(link)
-                addRule(table)
-            }
-    }
 
     // Code highlight colors
     val ADDED_CODE_COLOR = JBColor(Color(45, 136, 59, 51), Color(45, 136, 59, 51)) // rgba(45, 136, 59, 0.20)
 
     val REMOVED_CODE_COLOR = JBColor(Color(250, 56, 54, 51), Color(250, 56, 54, 51)) // rgba(250, 56, 54, 0.20)
-
-    // Global accept/reject button colors (used in both global and per-block buttons)
-    val GLOBAL_ACCEPT_BUTTON_COLOR = JBColor(0x5000AA00, 0x5000BB00) // Moderately bright green with balanced opacity
-    val GLOBAL_REJECT_BUTTON_COLOR = OxideCodeColors.sendButtonColor
-
-    val FILE_MENTION_HIGHLIGHT_COLOR =
-        JBColor(
-            java.awt.Color(0, 0, 0, 30), // Light mode: black with low alpha
-            java.awt.Color(255, 255, 255, 30), // Dark mode: white with low alpha
-        )
 
     val LANGUAGE_EXTENSIONS =
         mapOf(
@@ -358,196 +68,18 @@ object OxideCodeConstants {
             "matlab" to listOf("m"),
         )
 
-    val AVAILABLE_TOOL_FLAVOR_TEXT =
-        mapOf(
-            "list_files" to "Listing: ",
-            "read_file" to "Reading: ",
-            "create_file" to "Creating: ",
-            "str_replace" to "Editing: ",
-            "search_files" to "Searching: ",
-            "web_search" to "Web searching: ",
-            "web_fetch" to "Fetching: ",
-            "glob" to "Finding files: ",
-            "find_usages" to "Finding usages of: ",
-            "get_errors" to "Checking for problems in file: ",
-            "prompt_crunching" to "Compacting context...",
-            "update_action_plan" to "Creating plan",
-            "bash" to "Running: ",
-            "powershell" to "Running: ",
-            "notebook_edit" to "Editing: ",
-            "multi_str_replace" to "Editing: ",
-            "apply_patch" to "Applying patch",
-        )
-
-    val AVAILABLE_TOOL_FLAVOR_TEXT_FOR_GLOWING_CURSOR =
-        mapOf(
-            "list_files" to "Listing files    ",
-            "read_file" to "Reading file       ", // add spacing to make it look smoother
-            "create_file" to "Creating file    ",
-            "str_replace" to "Editing file",
-            "search_files" to "Searching files    ",
-            "web_search" to "Searching web",
-            "web_fetch" to "Fetching web page",
-            "glob" to "Finding files",
-            "find_usages" to "Finding usages",
-            "get_errors" to "Checking for problems",
-            "prompt_crunching" to "Compacting context",
-            "update_action_plan" to "Creating plan",
-            "bash" to "Running bash command",
-            "powershell" to "Running powershell command",
-            "notebook_edit" to "Editing",
-            "multi_str_replace" to "Editing",
-            "apply_patch" to "Applying patch",
-        )
-
-    val AVAILABLE_COMPLETED_TOOL_FLAVOR_TEXT =
-        mapOf(
-            "list_files" to "Listed:",
-            "read_file" to "Read:",
-            "create_file" to "Created:",
-            "str_replace" to "Edited:",
-            "search_files" to "Searched:",
-            "web_search" to "Web searched:",
-            "web_fetch" to "Fetched:",
-            "glob" to "Searched file paths:",
-            "find_usages" to "Found usages:",
-            "get_errors" to "Checked:",
-            "prompt_crunching" to "Finished compacting context.",
-            "update_action_plan" to "Updated plan",
-            "apply_patch" to "Applied patch",
-            "bash" to " ", // for more reading space
-            "powershell" to " ", // for more reading space
-            "notebook_edit" to "",
-            "multi_str_replace" to "",
-        )
-    val AVAILABLE_FAILED_TOOL_FLAVOR_TEXT =
-        mapOf(
-            "list_files" to "Failed to list files in directory:",
-            "read_file" to "Failed to read:",
-            "create_file" to "Failed to create:",
-            "str_replace" to "Failed to edit:",
-            "search_files" to "Failed to search:",
-            "web_search" to "Failed to search the web for:",
-            "web_fetch" to "Failed to fetch from web:",
-            "glob" to "Failed to find files:",
-            "find_usages" to "Failed to find usages:",
-            "get_errors" to "Failed to check for problems:",
-            "prompt_crunching" to "Failed to compact context. We recommend starting a new chat ($META_KEY+N)",
-            "update_action_plan" to "Failed to update plan:",
-            "bash" to "Failed to execute bash command:",
-            "powershell" to "Failed to execute powershell command:",
-            "notebook_edit" to "Failed to edit:",
-            "multi_str_replace" to "Failed to edit:",
-            "apply_patch" to "Failed to apply patch",
-        )
-
-    val CODE_FILES =
-        setOf(
-            ".py",
-            ".rs",
-            ".go",
-            ".kt",
-            ".kts",
-            ".java",
-            ".scala",
-            ".sc",
-            ".sbt",
-            ".cpp",
-            ".cc",
-            ".c",
-            ".h",
-            ".hpp",
-            ".cxx",
-            ".cs",
-            ".js",
-            ".jsx",
-            ".ts",
-            ".tsx",
-        )
-
-    val OTHER_IMPORTANT_FILES =
-        setOf(
-            ".gitignore",
-            "DockerFile",
-            ".sh",
-            ".html",
-            ".css",
-            ".scss",
-        )
-
     val EXTENSION_TO_LANGUAGE: Map<String, String> =
         LANGUAGE_EXTENSIONS.entries
             .flatMap { (language, extensions) ->
                 extensions.map { extension -> extension to language }
             }.toMap()
 
-    // Onboarding constants
-    const val FILE_CONTEXT_USAGE_CHATS_SENT = 6 // file context - first feature to show
-    const val CHAT_HISTORY_CHATS_SENT = 20 // show chat history - mid-level feature
-
-    // Gateway onboarding constants
-    const val GATEWAY_CLIENT_ONBOARDING_TITLE = "Sweep AI - Incorrect Plugin for Gateway Client"
-    const val GATEWAY_HOST_ONBOARDING_TITLE = "Sweep AI - Incorrect Plugin for Gateway Host"
-
-    val GATEWAY_CLIENT_ONBOARDING_MESSAGE =
-        """
-        <html>
-        <p>This plugin will not work with JetBrains Gateway. Please install the <b>Sweep Remote Gateway Client</b> plugin instead.</p>
-        <p>Docs: <a href="https://docs.sweep.dev/gateway">https://docs.sweep.dev/gateway</a></p>
-        </html>
-        """.trimIndent()
-
-    val GATEWAY_HOST_ONBOARDING_MESSAGE =
-        """
-        <html>
-        <p>This plugin will not work with JetBrains Gateway. Please install the <b>Sweep Remote Gateway Host</b> plugin instead.</p>
-        <p>Docs: <a href="https://docs.sweep.dev/gateway">https://docs.sweep.dev/gateway</a></p>
-        </html>
-        """.trimIndent()
-
-    const val FILE_CONTEXT_USAGE_COUNT_THRESHOLD = 3
-    const val STORED_FILES_TIMEOUT = 2 * 24 * 60 * 60 * 1000L // 2 days
-    const val MAX_RECENT_CONVERSATIONS = 200
-    const val AGENT_MODE_DOCS = "https://docs.sweep.dev/agent#using-agent"
-    const val DEFAULT_CHAT_PLACEHOLDER = "Build or Search with Sweep - Type @ to reference files"
-    const val PLAN_MODE_CHAT_PLACEHOLDER = "Plan with Sweep - Type @ to reference files"
-    const val CONTINUE_PLANNING_PLACEHOLDER = "Tell Sweep what to change"
-
-    // Chat tips shown after 5 user messages
-    val CHAT_TIPS =
-        listOf(
-            "Tip: \"AI Code Review\" is available in \"Search Everywhere\" (press Shift Shift)",
-            "Tip: Press Shift + Tab to enter plan mode",
-            "Tip: Create new chats (${META_KEY}+N) when starting new tasks",
-            "Tip: Sent messages will be queued while the Agent is running",
-            "Tip: Select code in the editor and press ${META_KEY}+J to add it to chat",
-            "Tip: Use ${META_KEY}+J to toggle the chat window open / closed",
-            "Tip: Click + drag files into the chat box to add them to the conversation",
-            "Tip: Add terminal outputs to chat using ${META_KEY}+J or @terminal",
-            "Tip: Use @Current Changes to have Sweep review your current changes",
-            "Tip: Go to Settings -> Advanced to have Sweep play sounds when finished",
-            "Tip: Configure autocomplete to ignore certain files in Settings -> Advanced",
-            "Tip: Click the globe to have Sweep read web links and search the web",
-        )
-
-    // Button text constants
-    const val SEND_BUTTON_TEXT = "" // Icon
-    const val RUN_PLAN_BUTTON_TEXT = "" // Icon
-    const val CONTINUE_PLANNING_BUTTON_TEXT = "" // Icon
-    const val CLEAR_CONTEXT_AND_RUN_PLAN_BUTTON_TEXT = "" // Icon
-
-    // Backend constants
-    const val REQUEST_CANCELLED_BY_USER = "Rejected: Request cancelled by user"
-
-    // Plugin IDs
     val FULL_LINE_PLUGIN_ID = PluginId.getId("org.jetbrains.completion.full.line")
     val COPILOT_PLUGIN_ID = PluginId.getId("com.github.copilot")
     val TABNINE_PLUGIN_ID = PluginId.getId("com.tabnine.TabNine")
     val WINDSURF_PLUGIN_ID = PluginId.getId("com.codeium.intellij")
     val AI_ASSISTANT_PLUGIN_ID = PluginId.getId("com.intellij.ml.llm")
 
-    // AI_ASSISTANT_PLUGIN_ID is first to break dependency chains before unloading other plugins
-    // Using listOf to preserve order - important for unloading plugins with dependencies
     val PLUGINS_TO_DISABLE =
         listOf(AI_ASSISTANT_PLUGIN_ID, COPILOT_PLUGIN_ID, TABNINE_PLUGIN_ID, WINDSURF_PLUGIN_ID, FULL_LINE_PLUGIN_ID)
 
@@ -560,11 +92,8 @@ object OxideCodeConstants {
             AI_ASSISTANT_PLUGIN_ID to "JetBrains AI Assistant",
         )
 
-    const val AGENT_ACTION_RESULT_UI_MAX_LENGTH = 20000
-    const val AGENT_ACTION_RESULT_BACKEND_MAX_LENGTH = 25000
-
     @Deprecated("UI no longer depends on a special content marker; rendering is driven by tool call completion events.")
-    const val SPECIAL_TOOL_CALL_TAG = "<sweep_tool_calls>"
+    const val SPECIAL_TOOL_CALL_TAG = "<oxidecode_tool_calls>"
 
     // Search and filtering constants
     const val COMMON_SYMBOLS_REGEX = "[{}();,=\\[\\]<>\"'`]"
@@ -2662,44 +2191,5 @@ object OxideCodeConstants {
             "rust" to RUST_KEYWORDS,
             "csharp" to CSHARP_KEYWORDS,
             "php" to PHP_KEYWORDS,
-        )
-
-    // File path patterns that typically indicate external/excluded files
-    val EXTERNAL_FILE_PATTERNS =
-        listOf(
-            "/build/",
-            "/target/",
-            "/.gradle/",
-            "/node_modules/",
-            "/.git/",
-            "/.idea/",
-            "/out/",
-            "/dist/",
-            "/bin/",
-            "/lib/",
-            "/libs/",
-            "/vendor/",
-            "/.vscode/",
-            "/temp/",
-            "/tmp/",
-            "/.cache/",
-            "/cache/",
-            "/logs/",
-            "/.m2/",
-            "/.npm/",
-            "/.yarn/",
-            "/venv/",
-            "/.venv/",
-            "/env/",
-            "/.env/",
-            "__pycache__/",
-            "/.pytest_cache/",
-            "/coverage/",
-            ".min.js",
-            ".min.css",
-            ".jar",
-            ".war",
-            ".ear",
-            ".class",
         )
 }

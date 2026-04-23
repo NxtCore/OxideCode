@@ -8,7 +8,7 @@ import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.oxidecode.utils.scaled
-import com.oxidecode.utils.withSweepFont
+import com.oxidecode.utils.withOxideCodeFont
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Cursor
@@ -73,7 +73,7 @@ class ChipPanel(
         // Input field for adding new chips - borderless, transparent
         inputField =
             JTextField(12).apply {
-                withSweepFont(project)
+                withOxideCodeFont(project)
                 border = JBUI.Borders.empty(2, 4)
                 isOpaque = false
                 toolTipText = "Type and press Enter to add"
@@ -242,7 +242,7 @@ class ChipPanel(
 
         val label =
             JLabel(text).apply {
-                withSweepFont(project, scale = 0.9f)
+                withOxideCodeFont(project, scale = 0.9f)
             }
 
         val closeButton =
