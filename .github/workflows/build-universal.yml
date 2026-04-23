@@ -212,11 +212,11 @@ jobs:
 
       - name: Place native libs into resources
         run: |
-          mkdir -p intellij-plugin/src/main/resources/native
-          cp temp-artifacts/oxidecode_jvm.linux.so intellij-plugin/src/main/resources/native/oxidecode_jvm_x64.so
-          cp temp-artifacts/oxidecode_jvm.darwin-arm64.dylib intellij-plugin/src/main/resources/native/oxidecode_jvm_arm64.dylib
-          cp temp-artifacts/oxidecode_jvm.darwin-x64.dylib intellij-plugin/src/main/resources/native/oxidecode_jvm_x64.dylib
-          cp temp-artifacts/oxidecode_jvm.win32.dll intellij-plugin/src/main/resources/native/oxidecode_jvm_x64.dll
+          mkdir -p intellij-plugin-v2/src/main/resources/native
+          cp temp-artifacts/oxidecode_jvm.linux.so intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_x64.so
+          cp temp-artifacts/oxidecode_jvm.darwin-arm64.dylib intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_arm64.dylib
+          cp temp-artifacts/oxidecode_jvm.darwin-x64.dylib intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_x64.dylib
+          cp temp-artifacts/oxidecode_jvm.win32.dll intellij-plugin-v2/src/main/resources/native/oxidecode_jvm_x64.dll
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -226,16 +226,16 @@ jobs:
           cache: gradle
 
       - name: Make gradlew executable
-        working-directory: intellij-plugin
+        working-directory: intellij-plugin-v2
         run: chmod +x gradlew
 
       - name: Build IntelliJ plugin
-        working-directory: intellij-plugin
+        working-directory: intellij-plugin-v2
         run: ./gradlew clean buildPlugin -PskipNativeCopy --no-daemon --parallel
 
       - name: Upload IntelliJ plugin
         uses: actions/upload-artifact@v4
         with:
           name: oxidecode-intellij-plugin
-          path: intellij-plugin/build/distributions/*.zip
-          retention-days: 30
+          path: intellij-plugin-v2/build/distributions/*.zip
+          retention-days: 14

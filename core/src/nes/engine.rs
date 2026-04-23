@@ -285,6 +285,28 @@ fn byte_offset_for_line_col(text: &str, line: u32, col: u32) -> usize {
     offset.min(text.len())
 }
 
+fn utf16_offset_to_byte_offset(text: &str, utf16_offset: usize) -> usize {
+    let mut units = 0usize;
+    let mut bytes = 0usize;
+    for ch in text.chars() {
+        let next_units = units + ch.len_utf16();
+        if next_units > utf16_offset {
+            break;
+        }
+        units = next_units;
+        bytes += ch.len_utf8();
+    }
+    bytes.min(text.len())
+}
+
+fn resolve_edit_start_offset(text: &str, edit: &EditDelta) -> usize {
+    if let Some(start_offset_utf16) = edit.start_offset {
+        utf16_offset_to_byte_offset(text, start_offset_utf16)
+    } else {
+        byte_offset_for_line_col(text, edit.start_line, edit.start_col)
+    }
+}
+
 fn build_unified_diff_like_original(original_text: &str, new_text: &str) -> String {
     let original_lines: Vec<&str> = original_text.lines().collect();
     let new_lines: Vec<&str> = new_text.lines().collect();
@@ -814,6 +836,7 @@ impl NesEngine {
         cursor_filepath: &str,
         cursor_line: u32,
         cursor_col: u32,
+        cursor_offset_utf16: u32,
         file_content: &str,
         language: &str,
         original_file_content: Option<&str>,
@@ -823,6 +846,7 @@ impl NesEngine {
         high_res_history_prompt: Option<&str>,
         high_res_edits: Option<&[EditDelta]>,
         changes_above_cursor: bool,
+        limit_context_chunks: bool,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
         let recent_edits: Vec<EditDelta> = {
@@ -889,6 +913,7 @@ impl NesEngine {
                     cursor_filepath,
                     cursor_line,
                     cursor_col,
+                    cursor_offset_utf16,
                     file_content,
                     orig,
                     history_prompt,
@@ -896,6 +921,7 @@ impl NesEngine {
                     retrieval_chunks,
                     high_res_history_prompt,
                     changes_above_cursor,
+                    limit_context_chunks,
                     cancel,
                 )
                 .await
@@ -1082,6 +1108,7 @@ impl NesEngine {
         cursor_filepath: &str,
         cursor_line: u32,
         cursor_col: u32,
+        cursor_offset_utf16: u32,
         file_content: &str,
         original_file_content: &str,
         history_prompt: Option<&str>,
@@ -1089,6 +1116,7 @@ impl NesEngine {
         retrieval_chunks: Option<&[FileChunk]>,
         high_res_history_prompt: Option<&str>,
         changes_above_cursor: bool,
+        limit_context_chunks: bool,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
         let history_from_prompt = history_prompt.is_some();
@@ -1100,8 +1128,7 @@ impl NesEngine {
                 .rev()
                 .filter_map(|edit| {
                     let text = &edit.file_content;
-                    let start_offset =
-                        byte_offset_for_line_col(text, edit.start_line, edit.start_col);
+                    let start_offset = resolve_edit_start_offset(text, edit);
 
                     let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
                     let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
@@ -1145,17 +1172,17 @@ impl NesEngine {
         }
 
         // ── 2. Compute cursor byte offset from (line, col) ──────────────
-        let cursor_position = {
-            let mut offset = 0usize;
-            for (i, line) in file_content.split_inclusive('\n').enumerate() {
-                if i == cursor_line as usize {
-                    let visible_len = line.strip_suffix('\n').map_or(line.len(), str::len);
-                    offset += (cursor_col as usize).min(visible_len);
-                    break;
-                }
-                offset += line.len();
-            }
-            offset
+        let cursor_position = utf16_offset_to_byte_offset(file_content, cursor_offset_utf16 as usize);
+
+        let capped_file_chunks = if limit_context_chunks {
+            file_chunks.map(|chunks| &chunks[..chunks.len().min(1)])
+        } else {
+            file_chunks
+        };
+        let capped_retrieval_chunks = if limit_context_chunks {
+            retrieval_chunks.map(|chunks| &chunks[..chunks.len().min(1)])
+        } else {
+            retrieval_chunks
         };
 
         // ── 3. Call the new build_sweep_prompt ────────────────────────────
@@ -1169,8 +1196,7 @@ impl NesEngine {
                     .rev()
                     .filter_map(|edit| {
                         let text = &edit.file_content;
-                        let start_offset =
-                            byte_offset_for_line_col(text, edit.start_line, edit.start_col);
+                        let start_offset = resolve_edit_start_offset(text, edit);
 
                         let after_end_calc = (start_offset + edit.inserted.len()).min(text.len());
                         let is_after_state = text.get(start_offset..after_end_calc) == Some(edit.inserted.as_str());
@@ -1220,9 +1246,10 @@ impl NesEngine {
             cursor_position,
             &recent_changes,
             Some(&high_res_recent_changes),
-            retrieval_chunks,
-            file_chunks,
+            capped_retrieval_chunks,
+            capped_file_chunks,
             changes_above_cursor,
+            !limit_context_chunks,
             None,  // num_lines_before
             None,  // num_lines_after
         );

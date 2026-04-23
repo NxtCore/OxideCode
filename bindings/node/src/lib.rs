@@ -267,6 +267,7 @@ pub async fn predict_next_edit(
             &cursor_filepath,
             cursor_line,
             cursor_col,
+            0,
             &file_content,
             &language,
             original_file_content.as_deref(),
@@ -275,6 +276,7 @@ pub async fn predict_next_edit(
             None,
             None,
             None,
+            false,
             false,
             cancel,
         )

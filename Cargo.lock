@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "oxidecode-core"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1124,11 +1124,12 @@ dependencies = [
 
 [[package]]
 name = "oxidecode-jvm"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "jni",
  "once_cell",
  "oxidecode-core",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -1138,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "oxidecode-node"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "napi",
  "napi-build",
