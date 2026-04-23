@@ -29,6 +29,13 @@ pub enum CompletionEndpoint {
     ChatCompletions,
 }
 
+pub enum TokenFamily {
+    Generic,
+    Zeta1,
+    Zeta2,
+    Sweep,
+}
+
 /// Selects which prompt format the NES engine uses when querying the model.
 ///
 /// - `Generic` — the original OxideCode format: asks the model for a JSON

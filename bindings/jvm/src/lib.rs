@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -230,6 +230,72 @@ fn byte_offset_for_line_col(text: &str, line: u32, col: u32) -> usize {
     offset.min(text.len())
 }
 
+fn byte_offset_to_line_col(text: &str, byte_offset: usize) -> (u32, u32) {
+    let clamped = clamp_to_char_boundary(text, byte_offset);
+    let prefix = &text[..clamped];
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() as u32;
+    let col = prefix
+        .rsplit('\n')
+        .next()
+        .map(|s| s.chars().count() as u32)
+        .unwrap_or(0);
+    (line, col)
+}
+
+fn build_delta_from_original(
+    filepath: &str,
+    original: &str,
+    current: &str,
+) -> Option<EditDelta> {
+    if original == current {
+        return None;
+    }
+
+    let mut prefix = 0usize;
+    let shared_prefix_limit = original.len().min(current.len());
+    while prefix < shared_prefix_limit && original.as_bytes()[prefix] == current.as_bytes()[prefix] {
+        prefix += 1;
+    }
+    prefix = clamp_to_char_boundary(original, prefix);
+    prefix = clamp_to_char_boundary(current, prefix);
+
+    let mut original_suffix = original.len();
+    let mut current_suffix = current.len();
+    while original_suffix > prefix
+        && current_suffix > prefix
+        && original.as_bytes()[original_suffix - 1] == current.as_bytes()[current_suffix - 1]
+    {
+        original_suffix -= 1;
+        current_suffix -= 1;
+    }
+
+    original_suffix = clamp_to_char_boundary(original, original_suffix);
+    current_suffix = clamp_to_char_boundary(current, current_suffix);
+
+    let removed = original[prefix..original_suffix].to_string();
+    let inserted = current[prefix..current_suffix].to_string();
+    if removed.is_empty() && inserted.is_empty() {
+        return None;
+    }
+
+    let (start_line, start_col) = byte_offset_to_line_col(original, prefix);
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    Some(EditDelta {
+        filepath: filepath.to_string(),
+        start_line,
+        start_col,
+        start_offset: None,
+        removed,
+        inserted,
+        file_content: current.to_string(),
+        timestamp_ms,
+    })
+}
+
 /// Initialise the tracing subscriber once for JNI. Call from the Java side early
 /// (for example when the plugin / extension starts) to enable debug logging.
 #[unsafe(no_mangle)]
@@ -422,6 +488,14 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
         ..NesConfig::default()
     };
     let engine = NesEngine::new(provider, nes_cfg);
+
+    if let Some(delta) = build_delta_from_original(
+        &request.file_path,
+        &request.original_file_contents,
+        &request.file_contents,
+    ) {
+        engine.push_edit(delta);
+    }
 
     let file_chunks: Vec<FileChunk> = request
         .file_chunks

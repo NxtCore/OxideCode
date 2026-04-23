@@ -18,8 +18,8 @@ repositories {
 dependencies {
     intellijPlatform {
         intellijIdea("2025.1")
+        bundledPlugins("Git4Idea")
     }
-
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("com.aayushatharva.brotli4j:brotli4j:1.16.0")
     implementation("io.github.java-diff-utils:java-diff-utils:4.12")

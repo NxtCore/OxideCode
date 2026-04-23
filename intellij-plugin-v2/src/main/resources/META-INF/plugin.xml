@@ -20,6 +20,7 @@
             <implementation-class>com.oxidecode.CoreBridge</implementation-class>
         </component>
     </application-components>
+    <resource-bundle>messages.oxidecode</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="com.oxidecode.settings.OxideCodeMetaData"/>
