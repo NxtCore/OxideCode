@@ -277,6 +277,7 @@ pub async fn predict_next_edit(
             None,
             None,
             false,
+            true,
             false,
             cancel,
         )

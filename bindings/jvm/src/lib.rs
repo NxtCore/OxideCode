@@ -87,6 +87,12 @@ struct NextEditPayloadChunk {
 }
 
 #[derive(Debug, Deserialize)]
+struct NextEditPayloadUserAction {
+    #[serde(alias = "action_type", alias = "actionType")]
+    action_type: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct NextEditPayloadRequest {
     #[serde(alias = "file_path", alias = "filePath")]
     file_path: String,
@@ -110,6 +116,8 @@ struct NextEditPayloadRequest {
     file_chunks: Vec<NextEditPayloadChunk>,
     #[serde(default, alias = "retrieval_chunks", alias = "retrievalChunks")]
     retrieval_chunks: Vec<NextEditPayloadChunk>,
+    #[serde(default, alias = "recent_user_actions", alias = "recentUserActions")]
+    recent_user_actions: Vec<NextEditPayloadUserAction>,
 }
 
 #[derive(Debug, Serialize)]
@@ -296,6 +304,17 @@ fn build_delta_from_original(
     })
 }
 
+fn should_force_ghost_text(recent_user_actions: &[NextEditPayloadUserAction]) -> bool {
+    if recent_user_actions.is_empty() {
+        return true;
+    }
+
+    recent_user_actions
+        .last()
+        .map(|action| action.action_type.eq_ignore_ascii_case("INSERT_CHAR"))
+        .unwrap_or(false)
+}
+
 /// Initialise the tracing subscriber once for JNI. Call from the Java side early
 /// (for example when the plugin / extension starts) to enable debug logging.
 #[unsafe(no_mangle)]
@@ -465,6 +484,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
     } else {
         Some(api_key)
     };
+    let force_ghost_text = should_force_ghost_text(&request.recent_user_actions);
     let calibration_log_dir_opt = if debug_log_dir.is_empty() {
         None
     } else {
@@ -479,6 +499,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
         cursor_position = request.cursor_position,
         cursor_line = cursor_line,
         cursor_col = cursor_col,
+        force_ghost_text = force_ghost_text,
         "Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete called"
     );
 
@@ -542,6 +563,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_fetchNextEditAutocomplete(
         },
         Some(&high_res_deltas),
         request.changes_above_cursor,
+        force_ghost_text,
         false,
         cancel,
     ));
@@ -745,6 +767,7 @@ pub extern "system" fn Java_com_oxidecode_CoreBridge_predictNextEdit(
         },
         Some(&high_res_deltas),
         changes_above_cursor != 0,
+        limit_context_chunks == 0,
         limit_context_chunks != 0,
         cancel,
     ));
