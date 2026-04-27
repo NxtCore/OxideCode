@@ -11,6 +11,7 @@ import com.intellij.openapi.command.CommandListener
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.command.undo.UndoManager
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
@@ -31,6 +32,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.util.concurrency.annotations.RequiresBlockingContext
 import com.intellij.util.concurrency.annotations.RequiresReadLockAbsence
+import com.oxidecode.CoreBridge
 import com.oxidecode.autocomplete.Debouncer
 import com.oxidecode.settings.OxideCodeConfig
 import com.oxidecode.services.*
@@ -340,9 +342,11 @@ class RecentEditsTracker(
     private var consumerJob: Job? = null
     private val fetchJobs =
         ConcurrentHashMap<Long, CompletableDeferred<Pair<AutocompleteRequestEntry, NextEditAutocompleteResponse?>>>()
+    private val inFlightNativeRequestIds = ConcurrentHashMap<Long, String>()
     private val mutex = Mutex()
     private val completionChannel =
         Channel<Pair<AutocompleteRequestEntry, NextEditAutocompleteResponse?>>(Channel.BUFFERED)
+    private val bridge by lazy { service<CoreBridge>() }
 
     private val trackerJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.Default + trackerJob)
@@ -1863,14 +1867,17 @@ class RecentEditsTracker(
         requestEntry: AutocompleteRequestEntry,
         deferred: CompletableDeferred<Pair<AutocompleteRequestEntry, NextEditAutocompleteResponse?>>,
     ) = ioScope.launch {
+        val requestId = bridge.newRequestId("next-edit")
         try {
             mutex.withLock {
                 // Cancel all previous requests
+                cancelInFlightNativeRequestsLocked()
                 fetchJobs.values.forEach { it.cancel() }
                 fetchJobs.clear()
 
                 // Add the new request
                 fetchJobs[requestEntry.requestTime] = deferred
+                inFlightNativeRequestIds[requestEntry.requestTime] = requestId
             }
 //            println("Sending request: ${requestEntry.id} at time ${requestEntry.requestTime}")
             val response =
@@ -1878,10 +1885,15 @@ class RecentEditsTracker(
                     filePath = requestEntry.editorState.filePath,
                     fileContents = requestEntry.editorState.documentText,
                     caretPosition = requestEntry.editorState.cursorOffset,
+                    requestId = requestId,
                 )?.apply { adjustIndices(requestEntry.editorState.documentText) }
             // println("Received response: ${response?.autocomplete_id} in ${System.currentTimeMillis() - requestEntry.requestTime}")
             deferred.complete(requestEntry to response)
             completionChannel.send(requestEntry to response)
+        } catch (e: CancellationException) {
+            runCatching { bridge.cancelRequest(requestId) }
+            deferred.cancel(e)
+            throw e
         } catch (e: Exception) {
             // println("Error fetching autocomplete: ${e.message}")
             deferred.complete(requestEntry to null)
@@ -1889,8 +1901,16 @@ class RecentEditsTracker(
         } finally {
             mutex.withLock {
                 fetchJobs.remove(requestEntry.requestTime)
+                inFlightNativeRequestIds.remove(requestEntry.requestTime)
             }
         }
+    }
+
+    private fun cancelInFlightNativeRequestsLocked() {
+        inFlightNativeRequestIds.values.forEach { requestId ->
+            runCatching { bridge.cancelRequest(requestId) }
+        }
+        inFlightNativeRequestIds.clear()
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -1936,6 +1956,7 @@ class RecentEditsTracker(
 
                         // If so, cancel all fetch requests
                         mutex.withLock {
+                            cancelInFlightNativeRequestsLocked()
                             fetchJobs.values.forEach { it.cancel() }
                             fetchJobs.clear()
                         }
@@ -2099,6 +2120,7 @@ class RecentEditsTracker(
         filePath: String,
         fileContents: String,
         caretPosition: Int,
+        requestId: String,
     ): NextEditAutocompleteResponse? {
         try {
             val repoName = userSpecificRepoName(project)
@@ -2219,13 +2241,17 @@ class RecentEditsTracker(
                             ).map { it.formattedDiff }
                             .filter { it.length <= MAX_DIFF_HUNK_SIZE }
                             .joinToString("\n"),
-                    changes_above_cursor = true,
+                    changes_above_cursor = false,
                     editor_diagnostics = getEditorDiagnostics(),
                 )
 
             val startTime = System.currentTimeMillis()
 
-            val result = AutocompleteIpResolverService.getInstance(project).fetchNextEditAutocomplete(request)
+            val result =
+                AutocompleteIpResolverService.getInstance(project).fetchNextEditAutocomplete(
+                    request = request,
+                    requestId = requestId,
+                )
 
             val wallTime = System.currentTimeMillis() - startTime
             val serverTime = result?.elapsed_time_ms ?: Long.MAX_VALUE
@@ -2464,6 +2490,7 @@ class RecentEditsTracker(
         consumerJob = null
 
         // Clear fetch jobs synchronously
+        cancelInFlightNativeRequestsLocked()
         fetchJobs.forEach { (_, deferred) ->
             if (!deferred.isCompleted) {
                 deferred.cancel()

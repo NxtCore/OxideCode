@@ -69,12 +69,15 @@ class AutocompleteIpResolverService(
      * This centralizes the entire HTTP request flow in the DNS resolver service.
      */
     @RequiresBackgroundThread
-    suspend fun fetchNextEditAutocomplete(request: NextEditAutocompleteRequest): NextEditAutocompleteResponse? =
+    suspend fun fetchNextEditAutocomplete(
+        request: NextEditAutocompleteRequest,
+        requestId: String? = null,
+    ): NextEditAutocompleteResponse? =
         try {
             val requestJson = encodeString(request, NextEditAutocompleteRequest.serializer())
             val bridge = service<CoreBridge>()
             val settings = OxideCodeSettings.getInstance()
-            val requestId = bridge.newRequestId("next-edit")
+            val nativeRequestId = requestId ?: bridge.newRequestId("next-edit")
             val responseJson =
                 withContext(Dispatchers.IO) {
                     bridge.fetchNextEditAutocomplete(
@@ -84,7 +87,7 @@ class AutocompleteIpResolverService(
                         settings.nesPromptStyle,
                         requestJson,
                         settings.debugLogDir,
-                        requestId,
+                        nativeRequestId,
                     )
                 }
             if (responseJson.isBlank()) {

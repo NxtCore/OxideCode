@@ -1,6 +1,5 @@
 use super::delta::EditDelta;
 use serde::{Deserialize, Serialize};
-
 // ─── Generic (JSON) prompt ────────────────────────────────────────────────────
 
 /// Builds the NES prompt from a history of recent edits and the current
@@ -1250,30 +1249,33 @@ fn compute_prefill(
     code_block: &str,
     relative_cursor: usize,
     changes_above_cursor: bool,
-    force_ghost_text: bool,
+    force_ghost_text: bool, //legacy
 ) -> (String, String) {
-    let is_at_eof = relative_cursor == code_block.len();
-    if force_ghost_text && !is_at_eof {
-        let pre_cursor = &code_block[..relative_cursor];
-        let (prefill, forced_prefix) = split_prefill_for_forced_prefix(pre_cursor);
-        return (prefill, forced_prefix);
-    }
-
     if changes_above_cursor {
         let pre_cursor = &code_block[..relative_cursor];
-        let lines: Vec<&str> = pre_cursor.splitlines_keep_terminator();
+        let lines: Vec<&str> = pre_cursor.split_inclusive('\n').collect();
+
         let before_split: String = lines
             .iter()
             .take(sweep::PREFILL_LINES_ABOVE)
             .copied()
             .collect();
+
         let after_split: String = lines
             .iter()
             .skip(sweep::PREFILL_LINES_ABOVE)
             .copied()
             .collect();
-        let leading_newlines = after_split.len() - after_split.trim_start_matches('\n').len();
-        (format!("{}{}", before_split, "\n".repeat(leading_newlines)), String::new())
+
+        let leading_newlines = after_split
+            .chars()
+            .take_while(|&c| c == '\n')
+            .count();
+
+        (
+            format!("{}{}", before_split, "\n".repeat(leading_newlines)),
+            String::new(),
+        )
     } else {
         (String::new(), String::new())
     }

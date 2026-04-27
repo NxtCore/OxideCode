@@ -846,6 +846,7 @@ impl NesEngine {
         high_res_history_prompt: Option<&str>,
         high_res_edits: Option<&[EditDelta]>,
         changes_above_cursor: bool,
+        force_ghost_text: bool,
         limit_context_chunks: bool,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
@@ -921,6 +922,7 @@ impl NesEngine {
                     retrieval_chunks,
                     high_res_history_prompt,
                     changes_above_cursor,
+                    force_ghost_text,
                     limit_context_chunks,
                     cancel,
                 )
@@ -1116,6 +1118,7 @@ impl NesEngine {
         retrieval_chunks: Option<&[FileChunk]>,
         high_res_history_prompt: Option<&str>,
         changes_above_cursor: bool,
+        force_ghost_text: bool,
         limit_context_chunks: bool,
         cancel: CancellationToken,
     ) -> Option<NesHint> {
@@ -1249,7 +1252,7 @@ impl NesEngine {
             capped_retrieval_chunks,
             capped_file_chunks,
             changes_above_cursor,
-            !limit_context_chunks,
+            force_ghost_text,
             None,  // num_lines_before
             None,  // num_lines_after
         );
